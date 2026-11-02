@@ -1,0 +1,7 @@
+FIRMA DEL APK DE MESAGRI
+========================
+mesagri.jks es la llave con la que se firma el APK. Guarda esta carpeta y no la compartas:
+- Las actualizaciones del APK tienen que firmarse con esta misma llave para instalarse encima de
+  la versión anterior (sin borrar los datos del celular).
+- Quien tenga esta llave podría firmar una app que parezca Mesagri.
+La clave está en clave.env. build.sh la usa sola.

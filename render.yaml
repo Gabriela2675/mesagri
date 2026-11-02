@@ -1,0 +1,49 @@
+# =============================================================================
+# Mesagri en Render (plan gratis) con la base de datos MySQL en Aiven (plan gratis)
+#
+# 1. En Render: New → Blueprint → elige este repositorio. Render lee este archivo.
+# 2. Te pedirá DATABASE_URL: pega el «Service URI» de tu MySQL de Aiven
+#    (mysql://avnadmin:...@....aivencloud.com:PUERTO/defaultdb?ssl-mode=REQUIRED).
+# 3. Al terminar, la app queda en https://<nombre>.onrender.com
+#      /        app (agricultor, comprador, almacén, transportista)
+#      /panel   panel del equipo
+#      /demo    escenario de varios celulares (pide la clave del equipo)
+#    La clave del equipo (TEAM_KEY) la ves en Render → tu servicio → Environment.
+#
+# Plan gratis: se duerme a los 15 minutos sin uso y tarda cerca de un minuto en despertar.
+# =============================================================================
+services:
+  - type: web
+    name: mesagri
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.22.0
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_CA_CERT
+        sync: false
+      - key: TEAM_KEY
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATA_KEY
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: DEMO_MODE
+        value: "true"
+      - key: DEMO_CLOCK
+        value: resume
+      - key: TRUST_PROXY
+        value: "true"
+      - key: FILES_STORAGE
+        value: db
+      - key: DB_POOL
+        value: "6"

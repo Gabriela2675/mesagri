@@ -1,0 +1,33 @@
+{
+  "name": "mesagri",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MESAGRI · MVP del piloto (UCSM · Innovación y Emprendedurismo 02): mercado agrícola directo de Arequipa. App y panel en React, API en NestJS, base de datos MySQL 8.4.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @mesagri/shared && npm run build -w @mesagri/api && npm run build -w @mesagri/web",
+    "start": "node apps/api/dist/main.js",
+    "dev:api": "npm run build -w @mesagri/shared && npm run dev -w @mesagri/api",
+    "dev:web": "npm run dev -w @mesagri/web",
+    "typecheck": "npm run typecheck -w @mesagri/shared && npm run typecheck -w @mesagri/api && npm run typecheck -w @mesagri/web",
+    "test": "npm test -w @mesagri/shared && npm test -w @mesagri/api",
+    "e2e": "npm run e2e -w @mesagri/web",
+    "build:autonoma": "npm run build:autonoma -w @mesagri/web",
+    "apk": "bash apps/android/build.sh"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "scarfSettings": {
+    "enabled": false
+  }
+}

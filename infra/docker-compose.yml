@@ -1,0 +1,46 @@
+# Mesagri en un servidor con Docker: MySQL 8.4 LTS y la API (que sirve la app web).
+#   docker compose -f infra/docker-compose.yml --env-file .env up -d --build
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: mesagri
+      MYSQL_USER: mesagri
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Falta DB_PASSWORD en .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Falta MYSQL_ROOT_PASSWORD en .env}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--default-time-zone=+00:00", "--mysqlx=OFF"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      retries: 30
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      API_PORT: 3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: mesagri
+      DB_USER: mesagri
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?Falta JWT_SECRET en .env}
+      DATA_KEY: ${DATA_KEY:?Falta DATA_KEY en .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-demo-mesagri}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      DEMO_CLOCK: ${DEMO_CLOCK:-resume}
+      FILES_DIR: /data/files
+    volumes:
+      - files:/data/files
+    ports:
+      - "3000:3000"
+volumes:
+  mysql-data:
+  files:

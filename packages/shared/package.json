@@ -1,0 +1,14 @@
+{
+  "name": "@mesagri/shared",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reglas de negocio puras de Mesagri (14.3): tipos, máquina de estados, límites, catálogo, ubigeo, intérprete de voz y datos de ejemplo. Las usa la app para orientar y el servidor para imponer.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "license": "UNLICENSED"
+}

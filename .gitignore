@@ -1,0 +1,18 @@
+node_modules/
+dist/
+runtime/
+logs/
+storage/files/
+.env
+apps/web/test-results/
+apps/web/playwright-report/
+*.log
+
+# versión autónoma y APK
+dist-app/
+apps/android/build/
+*.apk
+*.idsig
+# la firma del APK no se sube a repositorios (sí va en el paquete privado del proyecto)
+apps/android/firma/*.jks
+apps/android/firma/clave.env
