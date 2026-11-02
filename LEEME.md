@@ -58,6 +58,10 @@ chacra (GPS), fotos con la cámara y lectura del QR desde la foto.
   comprobarlos: el celular del agricultor comprueba el código que le dicta el comprador, pero no
   puede leerlo. Las personas de ejemplo son públicas a propósito (se entra con ellas desde
   **Ver cuentas de prueba**).
+- **Ingreso con código por SMS** (cuando está configurado, ver abajo): el código llega por SMS al
+  celular de la persona, enviado desde el celular Android de Mesagri. En Chrome de Android se
+  completa solo. Si el celular de los SMS no responde, se ofrece WhatsApp (si está) o, en la
+  versión de prueba, el código en pantalla para registrarse.
 - **Ingreso con código por WhatsApp** (cuando está configurado, ver abajo): la persona escribe su
   celular, toca **Abrir WhatsApp**, envía el mensaje que aparece listo para el número de Mesagri y
   le llega al instante su código de 6 dígitos. Como el mensaje sale de su propio WhatsApp, prueba
@@ -75,6 +79,27 @@ chacra (GPS), fotos con la cámara y lectura del QR desde la foto.
   si pasa mucho tiempo sin uso: se vuelve a encender en Aiven → servicio → **Power on**.
 - **Actualizar**: cada cambio que se sube a la rama `main` de GitHub se publica solo (Render vuelve
   a compilar). La configuración está en `render.yaml`; la base se conecta con `DATABASE_URL`.
+
+### Código por SMS (sin costo por mensaje)
+
+Los proveedores de SMS cobran cada mensaje (Twilio, unos US$ 0,25 por SMS a Perú). En cambio, un
+celular Android con un chip de **SMS ilimitados** puede mandar los códigos como mensajes normales,
+con la app gratuita y de código abierto **SMS Gateway for Android** (SMSGate):
+
+1. Un celular Android (5.0 o más) con chip con SMS ilimitados y con internet (Wi-Fi o datos).
+2. Instalar la app desde <https://sms-gate.app> (botón de descarga, archivo APK) y darle permiso
+   para enviar SMS.
+3. En la app: activar **Servidor en la nube** (Cloud server) y encenderla. En su pantalla de inicio
+   aparecen el **usuario** y la **contraseña**.
+4. En Ajustes del celular → Batería → quitar la optimización de batería para la app. Dejar el
+   celular cargando y con señal. Si Android pregunta si la app puede enviar muchos SMS, elegir
+   **Permitir siempre**.
+5. **Render → mesagri → Environment**: `SMS_GATEWAY_USER` y `SMS_GATEWAY_PASSWORD` (los de la
+   app) y, si quieres, `DEMO_CODES_TO` con tu celular (9 dígitos): cuando presentes con la clave
+   del equipo guardada en tu celular, el código de las cuentas de prueba te llega por SMS.
+
+Para probar: `POST /api/v1/demo/sms/test` con la clave del equipo y `{ "phone": "9XXXXXXXX" }`, o
+crear una cuenta en la app. `GET /api/v1/demo/sms` muestra los SMS enviados hoy y el último error.
 
 ### Código por WhatsApp (sin costo)
 

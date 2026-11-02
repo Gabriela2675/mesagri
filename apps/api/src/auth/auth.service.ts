@@ -16,6 +16,7 @@ import { DomainHttpError, ruleError } from '../common/errors';
 import { RateLimiter } from '../common/rate-limit';
 import { hashPassword, otpCode, totp, verifyPassword, verifyTotp } from './secrets';
 import { WhatsAppService, WhatsAppError } from './whatsapp';
+import { SmsService, SmsError } from './sms';
 import { teamOk } from '../common/team';
 
 const ROLE_NAME: Record<string, string> = { FARMER: 'agricultor', BUYER: 'comprador (MYPE)', WAREHOUSE: 'almacén aliado', CARRIER: 'transportista aliado', ADMIN: 'equipo de Mesagri' };
@@ -32,7 +33,7 @@ export class AuthService implements OnModuleInit {
   private readonly log = new Logger('Autenticación');
   private readonly limiter = new RateLimiter();
 
-  constructor(private readonly engine: EngineService, private readonly jwt: JwtService, private readonly wa: WhatsAppService) {
+  constructor(private readonly engine: EngineService, private readonly jwt: JwtService, private readonly wa: WhatsAppService, private readonly sms: SmsService) {
     engine.seedHooks.push(() => this.ensureTeamCredentials());
     // al reiniciar la demo se empieza de cero también con los límites de intentos
     engine.bus.on('reset', () => this.limiter.clear());
@@ -118,6 +119,8 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Pide un código de 6 dígitos.
+   * - Con SMS (celular Android de Mesagri con SMS Gateway): el código llega por SMS al celular de la
+   *   persona. Es lo primero que se usa si está configurado.
    * - Con WhatsApp en modo «responder» (sin costo): no se manda nada todavía. La app abre WhatsApp
    *   con el mensaje listo para el número de Mesagri; cuando la persona lo envía, Meta avisa al
    *   webhook y se le responde con el código (answerWhatsApp). Como el mensaje sale de su propio
@@ -127,7 +130,7 @@ export class AuthService implements OnModuleInit {
    *   del equipo) lo pide por WhatsApp, como sería con una cuenta real.
    * - Sin WhatsApp: en la versión de prueba, en pantalla (con las reglas de los celulares de confianza).
    */
-  async requestOtp(phoneRaw: string, purpose: OtpPurpose, ip: string, deviceKey?: string, teamKey?: string, stage = false) {
+  async requestOtp(phoneRaw: string, purpose: OtpPurpose, ip: string, deviceKey?: string, teamKey?: string, stage = false, host?: string) {
     const phone = String(phoneRaw ?? '').replace(/\s/g, '');
     if (!isPhoneValid(phone)) throw new DomainHttpError(422, 'BAD_PHONE', 'Ese número no parece correcto (9 dígitos, empieza con 9).');
     if (!['REGISTER', 'LOGIN', 'RECOVER'].includes(purpose)) throw new DomainHttpError(422, 'BAD_PURPOSE', 'Motivo no válido.');
@@ -147,7 +150,17 @@ export class AuthService implements OnModuleInit {
     }
 
     if (u && seedSets().users.has(u.id)) {
-      // cuenta de ejemplo: quien presenta la pide por WhatsApp, como sería de verdad
+      // cuenta de ejemplo: a quien presenta le llega por SMS a su celular, como sería de verdad
+      if (CONFIG.demo && presenter && this.sms.configured && CONFIG.demoCodesTo.length) {
+        const code = await this.issueCode(phone, purpose);
+        try {
+          for (const to of CONFIG.demoCodesTo) await this.sms.send(to, SmsService.text(code, host));
+          return { ...base, sent: true, channel: 'SMS', to: maskPhone(CONFIG.demoCodesTo[0]), demoAccount: true };
+        } catch (e) {
+          return { ...base, sent: false, channel: 'PANTALLA', demoCode: code, demoAccount: true, notice: (e as SmsError).userMessage ?? 'No pudimos enviar el SMS.' };
+        }
+      }
+      // o la pide por WhatsApp
       if (CONFIG.demo && presenter && this.wa.responder) {
         let ask = '';
         do { ask = Array.from({ length: 4 }, () => 'ACDEFHJKMNPRTUVWXY'[crypto.randomInt(0, 18)]).join(''); } while (this.demoAsks.has(ask));
@@ -169,8 +182,24 @@ export class AuthService implements OnModuleInit {
       return { ...base, sent: CONFIG.demo, channel: 'PANTALLA', demoCode: CONFIG.demo ? code : undefined, demoAccount: true };
     }
 
+    const waText = purpose === 'REGISTER' ? 'Hola Mesagri, quiero mi código para crear mi cuenta' : 'Hola Mesagri, quiero mi código para ingresar';
+    if (this.sms.configured) {
+      this.guard('sms:' + phone, CONFIG.demo ? 6 : 5, 15 * 60_000);
+      this.guard('sms-ip:' + ip, CONFIG.demo ? 60 : 30, 15 * 60_000);
+      const code = await this.issueCode(phone, purpose);
+      try {
+        await this.sms.send(phone, SmsService.text(code, host));
+        return { ...base, sent: true, channel: 'SMS', to: maskPhone(phone) };
+      } catch (e) {
+        const why = e instanceof SmsError ? e.userMessage : 'No pudimos enviar el SMS.';
+        // si el SMS no salió: por WhatsApp (si está), o en la versión de prueba en pantalla (registro o celular de confianza)
+        if (this.wa.responder) { const link = await this.wa.link(waText); if (link) return { ...base, sent: false, channel: 'WHATSAPP_IN', wa: link, notice: why }; }
+        if (CONFIG.demo && (await this.showCode(u, purpose, deviceKey))) return { ...base, sent: false, channel: 'PANTALLA', demoCode: code, notice: why };
+        throw new DomainHttpError(502, 'SMS', why);
+      }
+    }
     if (this.wa.responder) {
-      const link = await this.wa.link(purpose === 'REGISTER' ? 'Hola Mesagri, quiero mi código para crear mi cuenta' : 'Hola Mesagri, quiero mi código para ingresar');
+      const link = await this.wa.link(waText);
       if (link) return { ...base, sent: false, channel: 'WHATSAPP_IN', wa: link };
       this.log.warn('WhatsApp sin número de Mesagri: el código se muestra en pantalla');
     } else if (this.wa.configured) {

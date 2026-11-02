@@ -112,12 +112,12 @@ export function Field({ label, help, error, children }: { label?: ReactNode; hel
     </div>
   );
 }
-export function Inp(p: { value: string | number; onInput: (v: string) => void; type?: string; mode?: 'numeric' | 'decimal' | 'tel' | 'text' | 'email' | 'search'; placeholder?: string; suffix?: ReactNode; prefix?: string; err?: boolean; max?: number; area?: boolean; label?: string; autoFocus?: boolean; id?: string }) {
+export function Inp(p: { value: string | number; onInput: (v: string) => void; type?: string; mode?: 'numeric' | 'decimal' | 'tel' | 'text' | 'email' | 'search'; placeholder?: string; suffix?: ReactNode; prefix?: string; err?: boolean; max?: number; area?: boolean; label?: string; autoFocus?: boolean; id?: string; autoComplete?: string }) {
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   useEffect(() => { if (p.autoFocus) ref.current?.focus(); }, []);
   const common = { ref, id: p.id, className: 'inp' + (p.err ? ' err' : ''), value: p.value as any, placeholder: p.placeholder, 'aria-label': p.label, maxLength: p.max, onChange: (e: any) => p.onInput(e.currentTarget.value) };
   if (p.area) return <textarea {...common} />;
-  const input = <input {...common} type={p.type ?? 'text'} inputMode={p.mode} autoComplete="off" />;
+  const input = <input {...common} type={p.type ?? 'text'} inputMode={p.mode} autoComplete={p.autoComplete ?? 'off'} />;
   if (!p.suffix && !p.prefix) return input;
   return <div className="inpwrap">{p.prefix && <span className="pre">{p.prefix}</span>}{input}{p.suffix && <span className="suf">{p.suffix}</span>}</div>;
 }

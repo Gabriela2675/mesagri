@@ -3,7 +3,7 @@
  * registro del negocio (MYPE), cobro y zonas del agricultor, ingreso y verificación por niveles.
  * A-00 a A-07, A-17 (nivel), B-01 a B-04.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { reg, homeFor } from './registry';
 import { Logo } from '../ui/brand';
 import { useApp, type AppCtx } from '../ctx';
@@ -16,7 +16,7 @@ import { panelUrl, LOCAL, IN_APK } from '../routes';
 import { useInstall } from '../install';
 import { liveSub } from '../helpers';
 import { auth, deviceAccounts } from '../net';
-import { openExternal } from '../platform';
+import { openExternal, waitSmsCode } from '../platform';
 import { money, dateShort, hhmm } from '@mesagri/shared/format';
 import { DOW_CHIP } from '@mesagri/shared/time';
 import type { Role, VerifCase, Evidence, Org } from '@mesagri/shared/types';
@@ -272,6 +272,8 @@ function PhoneLogin({ role }: { role: string }) {
   const [busy, setBusy] = useState(false);
   const [list, setList] = useState(false);
   const [wa, setWa] = useState<{ link: string; number: string; demo?: boolean } | undefined>();
+  const stopSms = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => stopSms.current?.(), []);
   const p = phone.replace(/\s/g, '');
   const ask = async (ph: string) => {
     if (!isPhoneValid(ph)) { setErr({ text: 'Ese número no parece correcto: son 9 dígitos y empieza con 9.' }); return; }
@@ -281,7 +283,9 @@ function PhoneLogin({ role }: { role: string }) {
       // cuenta de una persona real y este no es su celular: sin proveedor de mensajes, el código no se muestra aquí
       if (r.deviceOnly) { setErr({ text: 'Por seguridad, en esta versión de prueba el código solo aparece en el celular donde se creó esta cuenta. Si cambiaste de celular, pide al equipo de Mesagri que restablezca tu acceso (o crea una cuenta nueva).' }); return; }
       // se pide escribiendo a Mesagri por WhatsApp: la respuesta trae el código
-      if (r.channel === 'WHATSAPP_IN' && r.wa) { setWa({ ...r.wa, demo: r.demoAccount }); setCode(''); return; }
+      if (r.channel === 'WHATSAPP_IN' && r.wa) { setWa({ ...r.wa, demo: r.demoAccount }); setCode(''); if (r.notice) A.toast(`${r.notice} Pídelo por WhatsApp.`, 'warn'); return; }
+      // llegó por SMS: en Chrome de Android se completa solo
+      if (r.channel === 'SMS') { setCode(''); stopSms.current?.(); stopSms.current = waitSmsCode(c => setCode(c)); A.toast(`Te enviamos un código por SMS al ${r.to ?? 'celular'}.`, 'info'); return; }
       // Como en un celular que lee el mensaje solo: el código se completa. En la versión de prueba, se muestra aquí.
       if (r.demoCode) setCode(r.demoCode);
       A.toast(r.demoCode
@@ -323,7 +327,7 @@ function PhoneLogin({ role }: { role: string }) {
         </div>
         <p className="bodym" style={{ margin: ".2em 0 0", color: "#E7F0DC" }}>Ingresa con tu número de celular. Te mandamos un código de 6 dígitos.</p>
         <Inp value={phone} onInput={(v) => { setPhone(v); setErr(null); }} mode="tel" prefix="+51" placeholder="987 654 321" label="Número de celular" autoFocus />
-        <Inp value={code} onInput={(v) => { setCode(v.replace(/\D/g, '').slice(0, 6)); setErr(null); }} mode="numeric" placeholder="Código de 6 dígitos" label="Código de acceso" max={6} suffix={<span style={{ pointerEvents: "auto" }}><button className="linkbtn" style={{ color: "var(--field)", padding: "0", minHeight: "0" }} onClick={() => ask(p)} disabled={busy}>{code || wa ? 'Reenviar' : 'Pedir código'}</button></span>} />
+        <Inp value={code} onInput={(v) => { setCode(v.replace(/\D/g, '').slice(0, 6)); setErr(null); }} mode="numeric" autoComplete="one-time-code" placeholder="Código de 6 dígitos" label="Código de acceso" max={6} suffix={<span style={{ pointerEvents: "auto" }}><button className="linkbtn" style={{ color: "var(--field)", padding: "0", minHeight: "0" }} onClick={() => ask(p)} disabled={busy}>{code || wa ? 'Reenviar' : 'Pedir código'}</button></span>} />
         {wa && <WhatsAppAsk wa={wa} dark demo={wa.demo} />}
         {err && (
           <div className="card danger" role="alert">
@@ -401,8 +405,9 @@ function Phone() {
     try {
       const r = await auth.otp(p, 'REGISTER');
       const wa = r.channel === 'WHATSAPP_IN' ? r.wa : undefined;
-      regSet(A, { phone: p, otpAt: Date.now(), demoCode: r.demoCode, wa });
-      if (!wa) A.toast(r.demoCode ? (r.notice ? `${r.notice} Por ser versión de prueba, tu código es ${r.demoCode}.` : `Versión de prueba: tu código es ${r.demoCode}.`) : `Te enviamos un código por WhatsApp${r.to ? ` al ${r.to}` : ''}.`, 'info');
+      regSet(A, { phone: p, otpAt: Date.now(), demoCode: r.demoCode, wa, channel: r.channel });
+      if (!wa) A.toast(r.demoCode ? (r.notice ? `${r.notice} Por ser versión de prueba, tu código es ${r.demoCode}.` : `Versión de prueba: tu código es ${r.demoCode}.`) : `Te enviamos un código por ${r.channel === 'SMS' ? 'SMS' : 'WhatsApp'}${r.to ? ` al ${r.to}` : ''}.`, 'info');
+      else if (r.notice) A.toast(`${r.notice} Pídelo por WhatsApp.`, 'warn');
       A.go('A-03');
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
@@ -441,7 +446,7 @@ export function CodeInput({ value, onChange, n, err, autoFocus }: { value: strin
   };
   return (
     <div className={'codein' + (err ? ' err' : '')} style={{ justifyContent: "center" }}>
-      {ids.map(i => <input key={i} id={scope + id(i)} inputMode="numeric" aria-label={`Dígito ${i + 1}`} value={(value[i] ?? '').trim()} maxLength={n}
+      {ids.map(i => <input key={i} id={scope + id(i)} inputMode="numeric" autoComplete={i === 0 ? 'one-time-code' : 'off'} aria-label={`Dígito ${i + 1}`} value={(value[i] ?? '').trim()} maxLength={n}
         onChange={(e: any) => set(i, e.currentTarget.value)}
         onKeyDown={(e: any) => { if (e.key === 'Backspace' && !(value[i] ?? '').trim() && i > 0) { (document.getElementById(scope + id(i - 1)) as HTMLInputElement | null)?.focus(); } }} />)}
     </div>
@@ -456,6 +461,8 @@ function Otp() {
   const [left, setLeft] = useState(60);
   const [busy, setBusy] = useState(false);
   useEffect(() => { const t = setInterval(() => setLeft(l => Math.max(0, l - 1)), 1000); return () => clearInterval(t); }, []);
+  // llegó por SMS: en Chrome de Android el código se completa solo
+  useEffect(() => (R.channel === 'SMS' ? waitSmsCode(c => setCode(c)) : undefined), []);
   const verify = async () => {
     setBusy(true);
     try {
@@ -471,7 +478,7 @@ function Otp() {
       const r = await auth.otp(R.phone ?? '', 'REGISTER');
       regSet(A, { demoCode: r.demoCode, wa: r.channel === 'WHATSAPP_IN' ? r.wa : undefined });
       if (r.channel === 'WHATSAPP_IN' && r.wa) { openExternal(r.wa.link); return; }
-      A.toast(r.demoCode ? `Tu código es ${r.demoCode} (versión de prueba).` : 'Te enviamos otro código.', 'info');
+      A.toast(r.demoCode ? `Tu código es ${r.demoCode} (versión de prueba).` : `Te enviamos otro código${r.channel === 'SMS' ? ' por SMS' : ''}.`, 'info');
     } catch (e: any) { setErr(e.message); }
   };
   return (

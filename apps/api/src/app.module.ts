@@ -15,6 +15,7 @@ import { AuthGuard } from './auth/auth.guard';
 import { AuthController } from './auth/auth.controller';
 import { SyncController } from './sync/sync.controller';
 import { WhatsAppService } from './auth/whatsapp';
+import { SmsService } from './auth/sms';
 import { WhatsAppController } from './auth/whatsapp.controller';
 import { SyncGateway } from './sync/sync.gateway';
 import { DemoController } from './demo/demo.controller';
@@ -40,7 +41,7 @@ class HealthController {
 @Global()
 @Module({
   imports: [JwtModule.register({ secret: CONFIG.jwtSecret, signOptions: { algorithm: 'HS256', issuer: 'mesagri' }, verifyOptions: { algorithms: ['HS256'], issuer: 'mesagri' } })],
-  providers: [EngineService, Commands, WhatsAppService, AuthService, AuthGuard, SyncGateway],
+  providers: [EngineService, Commands, WhatsAppService, SmsService, AuthService, AuthGuard, SyncGateway],
   controllers: [HealthController, AuthController, WhatsAppController, SyncController, DemoController, FilesController, CatalogController, OrdersController, VerificationController, AdminController, StorageController, BillingController, ShippingController],
   exports: [EngineService, Commands, AuthService, AuthGuard],
 })

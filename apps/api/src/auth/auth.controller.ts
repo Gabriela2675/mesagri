@@ -34,8 +34,8 @@ export class AuthController {
   constructor(private readonly auth: AuthService, private readonly engine: EngineService, private readonly cmd: Commands) {}
 
   @Post('auth/otp') @HttpCode(200)
-  @ApiOperation({ summary: 'Envía un código de 6 dígitos por WhatsApp (registro, ingreso o recuperación)', description: 'channel WHATSAPP: el código llegó por WhatsApp (to: número enmascarado). channel PANTALLA: versión de prueba, el código viene en demoCode (cuentas de ejemplo; sin WhatsApp configurado; o si WhatsApp no pudo entregarlo, solo para registrarse o en un celular de confianza, encabezado x-device-key). Con x-team-key, el código de las cuentas de ejemplo llega al WhatsApp del equipo (DEMO_WHATSAPP_TO).' })
-  otp(@Body() b: OtpDto, @Req() req: Request, @Headers('x-device-key') key?: string, @Headers('x-team-key') team?: string) { return this.auth.requestOtp(b.phone, b.purpose, ip(req), key, team, b?.escenario === true); }
+  @ApiOperation({ summary: 'Envía un código de 6 dígitos por SMS o WhatsApp (registro, ingreso o recuperación)', description: 'channel SMS: el código llegó por SMS (to: número enmascarado). channel WHATSAPP_IN: la persona lo pide escribiendo a Mesagri por WhatsApp (wa.link). channel WHATSAPP: el código llegó por WhatsApp (to: número enmascarado). channel PANTALLA: versión de prueba, el código viene en demoCode (cuentas de ejemplo; sin WhatsApp configurado; o si WhatsApp no pudo entregarlo, solo para registrarse o en un celular de confianza, encabezado x-device-key). Con x-team-key, el código de las cuentas de ejemplo llega al WhatsApp del equipo (DEMO_WHATSAPP_TO).' })
+  otp(@Body() b: OtpDto, @Req() req: Request, @Headers('x-device-key') key?: string, @Headers('x-team-key') team?: string) { return this.auth.requestOtp(b.phone, b.purpose, ip(req), key, team, b?.escenario === true, req.hostname); }
 
   @Post('auth/otp/verify') @HttpCode(200)
   @ApiOperation({ summary: 'Verifica el código del registro y entrega un permiso de 15 minutos para crear la cuenta' })

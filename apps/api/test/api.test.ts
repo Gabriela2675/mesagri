@@ -393,6 +393,90 @@ describe('API de Mesagri', () => {
     });
   });
 
+  describe('código por SMS desde el celular de Mesagri (SMS Gateway for Android)', () => {
+    let CONFIG: any;
+    let gw: nodeHttp.Server;
+    const sms: { auth: string; to: string[]; text: string }[] = [];
+    let fail = false;
+    const saved: any = {};
+    beforeAll(async () => {
+      CONFIG = createRequire(path.resolve(process.cwd(), 'package.json'))('./dist/config.js').CONFIG;
+      // el «celular» de mentira: guarda los SMS que le pide el servidor
+      gw = nodeHttp.createServer((req, res) => {
+        let raw = '';
+        req.on('data', d => { raw += d; });
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json');
+          if (req.method === 'POST' && req.url === '/3rdparty/v1/messages') {
+            if (fail) { res.statusCode = 500; res.end(JSON.stringify({ message: 'sin señal' })); return; }
+            const b = JSON.parse(raw);
+            sms.push({ auth: String(req.headers.authorization ?? ''), to: b.phoneNumbers, text: b.textMessage?.text ?? '' });
+            res.statusCode = 202; res.end(JSON.stringify({ id: 'sms-' + sms.length, state: 'Pending' }));
+            return;
+          }
+          res.statusCode = 404; res.end('{}');
+        });
+      });
+      await new Promise<void>(r => gw.listen(0, '127.0.0.1', () => r()));
+      Object.assign(saved, { sms: { ...CONFIG.sms }, demoCodesTo: CONFIG.demoCodesTo, teamKey: CONFIG.teamKey });
+      Object.assign(CONFIG.sms, { url: `http://127.0.0.1:${(gw.address() as AddressInfo).port}/3rdparty/v1`, user: 'USUARIO', password: 'clave-sms' });
+      CONFIG.demoCodesTo = ['955555555'];
+      CONFIG.teamKey = 'clave-equipo-sms';
+    });
+    afterAll(async () => {
+      Object.assign(CONFIG.sms, saved.sms);
+      CONFIG.demoCodesTo = saved.demoCodesTo;
+      CONFIG.teamKey = saved.teamKey;
+      await new Promise(r => gw.close(r));
+    });
+
+    it('registro e ingreso con el código que llega por SMS', async () => {
+      const phone = '966000222';
+      const r = await api().post('/api/v1/auth/otp').send({ phone, purpose: 'REGISTER' });
+      expect(r.body.channel).toBe('SMS');
+      expect(r.body.demoCode).toBeUndefined();
+      expect(r.body.to).toMatch(/^9•• ••• \d{3}$/);
+      const m = sms.at(-1)!;
+      expect(m.to).toEqual(['+51' + phone]);
+      expect(m.auth).toBe('Basic ' + Buffer.from('USUARIO:clave-sms').toString('base64'));
+      expect(m.text).toMatch(/^Tu codigo de Mesagri es \d{6}\. Vence en 5 min\./);
+      expect(m.text).toMatch(/\n@127\.0\.0\.1 #\d{6}$/); // Chrome de Android completa el código solo
+      expect(m.text.length).toBeLessThanOrEqual(160);
+      const code = /es (\d{6})\./.exec(m.text)![1];
+      const v = await api().post('/api/v1/auth/otp/verify').send({ phone, code });
+      expect(v.status).toBe(200);
+      const reg = await api().post('/api/v1/auth/register').send({ ticket: v.body.ticket, event: { id: 'e-reg-sms-1', p: { userId: 'u-sms-1', orgId: 'org-sms-1', role: 'FARMER', phone, name: 'Agricultor por SMS', lang: 'es', org: { district: '040519' } } } });
+      expect(reg.status).toBe(201);
+      const l = await api().post('/api/v1/auth/otp').send({ phone, purpose: 'LOGIN' });
+      expect(l.body.channel).toBe('SMS');
+      const code2 = /es (\d{6})\./.exec(sms.at(-1)!.text)![1];
+      expect((await api().post('/api/v1/auth/login').send({ phone, code: code2, role: 'FARMER' })).body.userId).toBe('u-sms-1');
+    });
+
+    it('cuentas de prueba: en pantalla para el público y por SMS al celular de quien presenta', async () => {
+      const pub = await api().post('/api/v1/auth/otp').send({ phone: '987654321', purpose: 'LOGIN' });
+      expect(pub.body.channel).toBe('PANTALLA');
+      const n = sms.length;
+      const pres = await api().post('/api/v1/auth/otp').set('x-team-key', 'clave-equipo-sms').send({ phone: '987654321', purpose: 'LOGIN' });
+      expect(pres.body.channel).toBe('SMS');
+      expect(pres.body.demoCode).toBeUndefined();
+      expect(sms.length).toBe(n + 1);
+      expect(sms.at(-1)!.to).toEqual(['+51955555555']);
+      const code = /es (\d{6})\./.exec(sms.at(-1)!.text)![1];
+      expect((await api().post('/api/v1/auth/login').send({ phone: '987654321', code, role: 'FARMER' })).body.userId).toBe('u-wilber');
+    });
+
+    it('si el celular de los SMS no responde, la versión de prueba muestra el código para registrarse', async () => {
+      fail = true;
+      try {
+        const r = await api().post('/api/v1/auth/otp').send({ phone: '966000333', purpose: 'REGISTER' });
+        expect(r.body.channel).toBe('PANTALLA');
+        expect(r.body.demoCode).toMatch(/^\d{6}$/);
+        expect(r.body.notice).toMatch(/SMS/);
+      } finally { fail = false; }
+    });
+  });
+
   it('política de privacidad publicada (la pide Meta)', async () => {
     const r = await api().get('/privacidad');
     expect(r.status).toBe(200);

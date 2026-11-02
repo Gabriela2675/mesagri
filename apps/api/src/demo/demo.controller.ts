@@ -12,6 +12,7 @@ import { CONFIG } from '../config';
 import { DomainHttpError } from '../common/errors';
 import { requireTeam } from '../common/team';
 import { WhatsAppService } from '../auth/whatsapp';
+import { SmsService } from '../auth/sms';
 import { otpCode } from '../auth/secrets';
 
 class SessionsDto { @ApiProperty({ type: [String], example: ['u-wilber', 'u-charo'] }) userIds!: string[]; @ApiPropertyOptional() device?: string; }
@@ -25,18 +26,33 @@ function demoOnly() {
 @ApiHeader({ name: 'x-team-key', required: false, description: 'Clave del equipo (TEAM_KEY). Obligatoria si el servidor tiene una.' })
 @Controller('demo')
 export class DemoController {
-  constructor(private readonly engine: EngineService, private readonly auth: AuthService, private readonly wa: WhatsAppService) {}
+  constructor(private readonly engine: EngineService, private readonly auth: AuthService, private readonly wa: WhatsAppService, private readonly sms: SmsService) {}
 
   @Get('status')
   @ApiOperation({ summary: 'Estado del servidor: época, reloj de la demo y personas de ejemplo' })
   async status() {
     const w = await this.wa.status();
-    return { demo: CONFIG.demo, teamKeyRequired: !!CONFIG.teamKey, whatsapp: { configured: w.configured, presenter: w.presenter, templateStatus: w.templateStatus }, clockMode: CONFIG.clockMode, epoch: this.engine.epoch, boot: this.engine.boot, seq: this.engine.seq, simNow: this.engine.simNow(), serverNow: Date.now(), personas: CONFIG.demo ? PERSONAS : [] };
+    return { demo: CONFIG.demo, teamKeyRequired: !!CONFIG.teamKey, sms: { configured: this.sms.configured }, whatsapp: { configured: w.configured, presenter: w.presenter, templateStatus: w.templateStatus }, clockMode: CONFIG.clockMode, epoch: this.engine.epoch, boot: this.engine.boot, seq: this.engine.seq, simNow: this.engine.simNow(), serverNow: Date.now(), personas: CONFIG.demo ? PERSONAS : [] };
   }
 
   @Post('sessions') @HttpCode(200)
   @ApiOperation({ summary: 'Sesiones de las personas de ejemplo sin código (escenario de varios celulares)' })
   sessions(@Body() b: SessionsDto, @Headers('x-team-key') key?: string) { requireTeam(key); return this.auth.demoSessions(b.userIds, b.device); }
+
+  @Get('sms')
+  @ApiOperation({ summary: 'Estado de los SMS: configurado, enviados hoy y el último error' })
+  smsStatus(@Headers('x-team-key') key?: string) { requireTeam(key); return this.sms.status(); }
+
+  @Post('sms/test') @HttpCode(200)
+  @ApiOperation({ summary: 'Manda un SMS de prueba a un celular (para comprobar el celular que envía los SMS)' })
+  async smsTest(@Body() b: { phone?: string }, @Headers('x-team-key') key?: string) {
+    requireTeam(key);
+    const digits = String(b?.phone ?? '').replace(/\D/g, '').slice(-9);
+    if (!/^9\d{8}$/.test(digits)) throw new DomainHttpError(422, 'BAD_PHONE', 'Escribe el celular con 9 dígitos.');
+    if (!this.sms.configured) throw new DomainHttpError(409, 'SMS_OFF', 'Falta configurar SMS_GATEWAY_USER y SMS_GATEWAY_PASSWORD en el servidor.');
+    try { await this.sms.send(digits, 'Prueba de Mesagri: los SMS funcionan.'); } catch (e: any) { throw new DomainHttpError(502, 'SMS', e?.userMessage ?? 'No se pudo enviar.', { detail: e?.message }); }
+    return { ok: true, to: '+51' + digits };
+  }
 
   @Get('whatsapp')
   @ApiOperation({ summary: 'Estado de WhatsApp: configurado, plantilla del código (aprobada o pendiente), enviados hoy y el último error' })

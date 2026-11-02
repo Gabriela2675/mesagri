@@ -56,3 +56,18 @@ export function openExternal(url: string) {
     if (!w) location.href = url;
   } catch { location.href = url; }
 }
+
+/**
+ * Chrome de Android completa solo el código que llega por SMS (WebOTP: el SMS termina con
+ * «@dominio #código»). Devuelve la función para dejar de esperar.
+ */
+export function waitSmsCode(onCode: (code: string) => void): () => void {
+  try {
+    if (!('OTPCredential' in window) || !navigator.credentials) return () => undefined;
+    const ac = new AbortController();
+    (navigator.credentials as any).get({ otp: { transport: ['sms'] }, signal: ac.signal })
+      .then((c: any) => { if (c?.code && /^\d{6}$/.test(String(c.code))) onCode(String(c.code)); })
+      .catch(() => undefined);
+    return () => ac.abort();
+  } catch { return () => undefined; }
+}

@@ -83,6 +83,21 @@ export const CONFIG = {
   /** Fotos y documentos: en la base de datos (sirve en la nube, donde el disco se borra) o en una carpeta. */
   filesInDb: (env('FILES_STORAGE', 'db') ?? 'db').toLowerCase() !== 'disk',
   /**
+   * Código por SMS desde un celular Android propio con la app gratuita «SMS Gateway for Android»
+   * (SMSGate, modo nube): el servidor le pide al celular que mande cada código como un SMS normal
+   * desde su chip. Con un plan de SMS ilimitados no cuesta nada por mensaje.
+   */
+  sms: {
+    url: (env('SMS_GATEWAY_URL', 'https://api.sms-gate.app/3rdparty/v1') ?? '').replace(/\/+$/, ''),
+    user: (env('SMS_GATEWAY_USER', '') ?? '').trim(),
+    password: (env('SMS_GATEWAY_PASSWORD', '') ?? '').trim(),
+    /** chip que manda los SMS en un celular con dos chips (1 o 2); vacío: el que elija el celular */
+    sim: num('SMS_SIM', 0),
+    dailyMax: num('SMS_DAILY_MAX', 400),
+  },
+  /** celulares del equipo que presenta: les llega el código de las cuentas de prueba (por SMS o WhatsApp con plantilla) */
+  demoCodesTo: (env('DEMO_CODES_TO', env('DEMO_WHATSAPP_TO', '')) ?? '').split(/[,;\s]+/).map(x => x.replace(/\D/g, '')).filter(x => x.length >= 9).map(x => x.slice(-9)),
+  /**
    * WhatsApp Business (API de Meta) para el código de ingreso. Con token e identificador del número:
    * - responder (lo normal, sin costo hasta 1 000 respuestas al mes por número): la persona escribe
    *   primero a Mesagri por WhatsApp (la app abre el mensaje listo) y Mesagri le responde con el código.

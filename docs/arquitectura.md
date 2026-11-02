@@ -170,6 +170,12 @@ En la nube (Render + Aiven, ver `render.yaml`) el servidor ya no manda el mundo 
   celular se aplican al instante con las reglas (optimista) y se confirman cuando llega su cambio.
   La prueba `packages/shared/test/privacy.test.ts` comprueba, acción por acción, que la copia de
   cada perfil es igual a lo que su perfil puede ver del mundo del servidor.
+- **Código por SMS** (`apps/api/src/auth/sms.ts`): si están `SMS_GATEWAY_USER` y
+  `SMS_GATEWAY_PASSWORD`, el servidor le pide al celular Android de Mesagri (app SMS Gateway for
+  Android, modo nube: `POST https://api.sms-gate.app/3rdparty/v1/messages`) que mande el código
+  como un SMS normal. Es lo primero que se usa. El texto va sin tildes (un solo SMS) y termina con
+  `@<dominio> #<código>` para que Chrome de Android lo complete solo (WebOTP). Con la clave del
+  equipo, el código de las cuentas de prueba va a `DEMO_CODES_TO`.
 - **Código por WhatsApp** (`apps/api/src/auth/whatsapp.ts` y `whatsapp.controller.ts`): en modo
   «responder» la app no recibe el código: `POST /auth/otp` devuelve `channel: WHATSAPP_IN` con un
   enlace `wa.me` al número de Mesagri y el mensaje listo. Cuando la persona lo envía, Meta avisa a

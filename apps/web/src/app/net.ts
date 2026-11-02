@@ -169,7 +169,7 @@ export class Sessions {
 
 export interface OtpSent {
   sent: boolean;
-  channel: 'WHATSAPP_IN' | 'WHATSAPP' | 'PANTALLA';
+  channel: 'SMS' | 'WHATSAPP_IN' | 'WHATSAPP' | 'PANTALLA';
   expiresIn: number;
   demoCode?: string;
   deviceOnly?: boolean;
@@ -181,6 +181,7 @@ export interface OtpSent {
 
 export const auth = {
   /**
+   * channel SMS: el código llegó por SMS (to: número enmascarado).
    * channel WHATSAPP_IN: la persona pide su código escribiendo a Mesagri por WhatsApp (wa.link abre el mensaje listo).
    * channel WHATSAPP: Mesagri ya se lo mandó (to: número enmascarado). channel PANTALLA: versión de prueba, demoCode.
    * deviceOnly: cuenta de una persona real y este no es un celular donde ya ingresó (el código no se muestra).

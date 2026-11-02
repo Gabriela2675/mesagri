@@ -47,8 +47,16 @@ services:
         value: db
       - key: DB_POOL
         value: "6"
-      # Código de ingreso por WhatsApp (opcional; ver LEEME → «Código por WhatsApp»). Sin ellos,
-      # en la versión de prueba el código se muestra en pantalla.
+      # Código de ingreso por SMS desde el celular Android de Mesagri (ver LEEME → «Código por SMS»)
+      - key: SMS_GATEWAY_USER
+        sync: false
+      - key: SMS_GATEWAY_PASSWORD
+        sync: false
+      # celular de quien presenta: le llega el código de las cuentas de prueba (9 dígitos)
+      - key: DEMO_CODES_TO
+        sync: false
+      # Código de ingreso por WhatsApp (opcional; ver LEEME → «Código por WhatsApp»). Sin SMS ni
+      # WhatsApp, en la versión de prueba el código se muestra en pantalla.
       - key: WHATSAPP_TOKEN
         sync: false
       - key: WHATSAPP_PHONE_ID
