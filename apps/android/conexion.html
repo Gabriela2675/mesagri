@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mesagri · Conectando</title>
+<style>
+  :root { --forest: #1E3F20; --leaf: #E7F0DC; --soft: #cfe0c1; --gold: #F2C14E; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--forest); color: #fff; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { min-height: 100%; display: flex; flex-direction: column; justify-content: center; padding: 28px 22px calc(28px + env(safe-area-inset-bottom)); gap: 18px; max-width: 460px; margin: 0 auto; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand img { width: 52px; height: 52px; }
+  .brand b { font-size: 28px; letter-spacing: .01em; }
+  h1 { font-size: 22px; margin: 6px 0 0; line-height: 1.25; }
+  p { margin: 0; color: var(--soft); font-size: 16px; line-height: 1.45; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .spin { width: 26px; height: 26px; border-radius: 50%; border: 3px solid rgba(255,255,255,.25); border-top-color: var(--gold); animation: g 1s linear infinite; flex: none; }
+  @keyframes g { to { transform: rotate(360deg); } }
+  button { font: inherit; font-weight: 800; border-radius: 14px; min-height: 52px; padding: 0 18px; border: 0; width: 100%; cursor: pointer; }
+  .main { background: var(--gold); color: #1d2a12; }
+  .sec { background: rgba(255,255,255,.12); color: #fff; }
+  .link { background: none; color: var(--leaf); min-height: 40px; width: auto; padding: 0; text-decoration: underline; font-weight: 700; }
+  .card { background: rgba(255,255,255,.08); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .cap { font-size: 13px; color: var(--soft); }
+  input { font: inherit; width: 100%; min-height: 48px; border-radius: 12px; border: 0; padding: 0 12px; }
+  .hide { display: none !important; }
+  .err { color: #ffd9cc; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><img src="/brand/mesagri-mark.svg" alt=""><b>Mesagri</b></div>
+
+  <section id="wait">
+    <div class="row"><span class="spin" aria-hidden="true"></span><h1>Conectando con Mesagri…</h1></div>
+    <p style="margin-top:10px">El servidor gratuito se duerme cuando nadie lo usa. Despertarlo toma hasta un minuto: no cierres la app.</p>
+    <p class="cap" id="tries" style="margin-top:8px"></p>
+  </section>
+
+  <section id="down" class="hide">
+    <h1 id="downTitle">Sin internet</h1>
+    <p id="downText" style="margin-top:8px">Revisa tus datos móviles o el Wi-Fi y vuelve a intentar.</p>
+  </section>
+
+  <div id="actions" class="hide" style="display:flex;flex-direction:column;gap:10px">
+    <button class="main" id="retry">Intentar de nuevo</button>
+    <button class="sec" id="offline">Probar sin internet</button>
+    <p class="cap">Sin internet se abre una versión de prueba con datos de ejemplo, guardada solo en este celular. Lo que hagas ahí no lo ven los demás.</p>
+  </div>
+
+  <div class="card">
+    <div class="cap">Servidor: <span id="srv"></span></div>
+    <button class="link" id="change" style="align-self:flex-start">Cambiar la dirección</button>
+    <div id="edit" class="hide" style="display:flex;flex-direction:column;gap:8px">
+      <input id="url" type="url" inputmode="url" autocomplete="off" placeholder="https://mesagri.onrender.com" aria-label="Dirección del servidor de Mesagri">
+      <button class="sec" id="save">Guardar y conectar</button>
+      <button class="link" id="reset" style="align-self:flex-start">Usar la que trae la app</button>
+      <div class="err hide" id="bad">Escribe una dirección completa, como https://mesagri.onrender.com</div>
+    </div>
+  </div>
+</main>
+<script>
+  (function () {
+    var A = window.MesagriAndroid || {};
+    var $ = function (id) { return document.getElementById(id); };
+    var srv = A.server ? A.server() : '';
+    $('srv').textContent = srv || 'ninguno (solo versión de prueba)';
+    $('url').value = srv;
+    function down(title, text) {
+      $('wait').classList.add('hide');
+      $('down').classList.remove('hide');
+      $('actions').classList.remove('hide');
+      $('downTitle').textContent = title;
+      $('downText').textContent = text;
+    }
+    window.__mesagri = {
+      waiting: function (n) { $('tries').textContent = n > 2 ? 'Despertando el servidor… (intento ' + n + ')' : ''; },
+      offline: function () { down('Sin internet', 'Revisa tus datos móviles o el Wi-Fi y vuelve a intentar.'); },
+      failed: function () { down('No pudimos conectar con el servidor de Mesagri', 'Puede estar en mantenimiento o la dirección cambió. Intenta otra vez en unos minutos.'); }
+    };
+    $('retry').onclick = function () { $('down').classList.add('hide'); $('actions').classList.add('hide'); $('wait').classList.remove('hide'); $('tries').textContent = ''; if (A.goOnline) A.goOnline(); };
+    $('offline').onclick = function () { if (A.openOffline) A.openOffline(); };
+    $('change').onclick = function () { $('edit').classList.toggle('hide'); };
+    $('save').onclick = function () {
+      var v = $('url').value.trim();
+      if (!/^https?:\/\/[^\s/]+/.test(v)) { $('bad').classList.remove('hide'); return; }
+      $('bad').classList.add('hide');
+      if (A.setServer && !A.setServer(v)) $('bad').classList.remove('hide');
+    };
+    $('reset').onclick = function () { if (A.setServer) A.setServer(''); };
+    if (!A.server) window.__mesagri.failed();
+  })();
+</script>
+</body>
+</html>

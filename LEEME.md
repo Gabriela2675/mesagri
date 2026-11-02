@@ -15,14 +15,17 @@ Es la **app final**: abre con la pantalla de inicio de Mesagri, cada quien se re
 con su celular según su tipo de usuario (agricultor, comprador MYPE, almacén aliado o transportista
 aliado) y el **equipo de Mesagri va al panel web**, con todas las pantallas de administración.
 
-Viene de dos formas:
+Viene de tres formas:
 
-- **App para celulares (autónoma)**: el APK de Android (`Mesagri.apk`) y la app web instalable
-  (carpeta `Mesagri-web`). Todo corre en el celular, sin laptop ni internet: las reglas, los datos
-  de ejemplo, el ingreso con código, el panel del equipo. Es la que se reparte al público.
-- **Con servidor (la laptop)**: NestJS + MySQL 8.4. Todos los celulares de la misma red Wi-Fi ven
-  los mismos pedidos en vivo, y trae la **demo** para presentar (varios celulares y el panel en una
-  pantalla, reloj que se adelanta, guía, modo sin señal).
+- **En la nube (la que se usa con el público)**: <https://mesagri.onrender.com>. El APK, la app en
+  el navegador de cualquier celular y el panel web usan el mismo servidor (Render) y la misma base
+  de datos (MySQL en Aiven): lo que hace uno lo ven los demás al instante, cada quien según su
+  perfil. Ver [En la nube](#en-la-nube-render--aiven).
+- **App autónoma**: dentro del APK («Probar sin internet») y como app web instalable (carpeta
+  `Mesagri-web`). Todo corre en el celular, sin internet, con datos de ejemplo propios.
+- **Con servidor en la laptop**: NestJS + MySQL 8.4 en Windows. Los celulares de la misma red Wi-Fi
+  ven los mismos pedidos en vivo, y trae la **demo** para presentar (varios celulares y el panel en
+  una pantalla, reloj que se adelanta, guía, modo sin señal).
 
 ## Qué se puede hacer
 
@@ -37,23 +40,60 @@ Viene de dos formas:
 Botones reales del celular: llamar (abre el marcador), cómo llegar (Google Maps), ubicación de la
 chacra (GPS), fotos con la cámara y lectura del QR desde la foto.
 
+## En la nube (Render + Aiven)
+
+| Dirección | Qué es |
+|---|---|
+| <https://mesagri.onrender.com> | La app: agricultor, comprador MYPE, almacén y transportista |
+| <https://mesagri.onrender.com/panel> | Panel del equipo de Mesagri |
+| <https://mesagri.onrender.com/demo> | Escenario de la demo (varios celulares y el panel a la vez): pide la **clave del equipo** |
+
+- **Todo en vivo y guardado en la nube**: cada acción se guarda en MySQL (Aiven) y le llega a cada
+  celular y al panel por Socket.IO. Las fotos y documentos también se guardan en la base.
+- **Cada perfil ve lo suyo** (`packages/shared/src/privacy.ts`): cada quien recibe completo lo de
+  su cuenta y lo de sus contrapartes (con quien tiene pedidos, envíos, reservas o solicitudes); de
+  las demás cuentas reales, solo lo público (nombre, distrito, publicaciones, calificaciones), sin
+  celular, DNI, dirección, cuentas de cobro, mensajes ni reclamos. El panel ve todo menos los
+  códigos. Los códigos de entrega, recojo y QR le llegan **sellados** a quien solo debe
+  comprobarlos: el celular del agricultor comprueba el código que le dicta el comprador, pero no
+  puede leerlo. Las personas de ejemplo son públicas a propósito (se entra con ellas desde
+  **Ver cuentas de prueba**).
+- **Ingreso**: no hay proveedor de SMS, así que el código se muestra en pantalla. En las cuentas
+  reales, solo en el celular donde se creó la cuenta (o donde ya se ingresó); si alguien cambió de
+  celular, el equipo usa **Restablecer acceso** en el panel.
+- **Clave del equipo** (`TEAM_KEY`): la genera Render. Se ve en Render → servicio **mesagri** →
+  **Environment**. Sirve para entrar a `/demo`, ver las cuentas de prueba del panel (con su
+  contraseña y el código vigente del doble factor), adelantar el reloj y reiniciar los datos de
+  ejemplo. No la compartas con el público.
+- **Plan gratis**: Render duerme el servidor a los 15 minutos sin uso y tarda cerca de un minuto en
+  despertarlo (el APK muestra «Conectando con Mesagri…» mientras tanto). Aiven puede apagar la base
+  si pasa mucho tiempo sin uso: se vuelve a encender en Aiven → servicio → **Power on**.
+- **Actualizar**: cada cambio que se sube a la rama `main` de GitHub se publica solo (Render vuelve
+  a compilar). La configuración está en `render.yaml`; la base se conecta con `DATABASE_URL`.
+
 ## App para celulares
 
 | Celular | Qué compartir | Cómo se instala |
 |---|---|---|
 | **Android 7 o más** | `Mesagri.apk` (por WhatsApp, Google Drive o un enlace) | Abrir el archivo → permitir **Instalar apps desconocidas** para la app con que se abrió (WhatsApp, Drive o Archivos) → **Instalar**. Si Play Protect avisa, **Más detalles → Instalar de todas formas** (la app no está en Play Store). |
-| **iPhone** y cualquier celular | La carpeta `Mesagri-web` publicada en un hosting con https (Netlify, GitHub Pages o Cloudflare Pages, todos gratis) | Abrir el enlace. En iPhone: **Compartir → Agregar a inicio**. En Android: botón **Instalar la app** de la pantalla de inicio. Después abre aunque no haya señal. |
+| **iPhone** y cualquier celular | El enlace <https://mesagri.onrender.com> | Abrir el enlace en el navegador. En iPhone se puede dejar en la pantalla de inicio con **Compartir → Agregar a inicio**. |
 
-- **Cada celular tiene sus propios datos de ejemplo** (las cuentas de prueba de abajo, pedidos,
-  publicaciones). Lo que se haga queda guardado en ese celular; en la pantalla de inicio está
-  **Volver a los datos de ejemplo** para empezar de nuevo.
+- **El APK (versión 1.1.0) se conecta a la nube**: abre `https://mesagri.onrender.com` y todos ven
+  lo mismo según su perfil. Sin internet ofrece **Probar sin internet**: la versión autónoma con
+  datos de ejemplo guardados solo en ese celular (desde ahí, **Usar la versión en línea** vuelve a
+  la nube). Si la dirección del servidor cambia, en la pantalla de conexión está **Cambiar la
+  dirección**. Se instala encima del APK 1.0.0 (misma firma).
+- En la versión autónoma **cada celular tiene sus propios datos de ejemplo**. Lo que se haga queda
+  guardado en ese celular; en la pantalla de inicio está **Volver a los datos de ejemplo**.
 - El código de 6 dígitos para entrar se muestra en pantalla (no hay proveedor de SMS); el panel
   del equipo se abre desde **Ya tengo cuenta → Equipo de Mesagri**, con las cuentas de prueba.
 - En el APK funcionan la cámara (fotos y QR), el GPS de la chacra, las llamadas, los mapas, el
   dictado por voz y la guía de audio del celular, y los PDF y CSV se guardan o se comparten.
-- **Actualizar el APK**: `bash apps/android/build.sh` en Linux (Ubuntu) deja un `Mesagri.apk`
-  nuevo (requisitos en la cabecera del script). Se firma con la llave de `apps/android/firma`:
-  guárdala, porque las actualizaciones necesitan esa misma llave para instalarse encima.
+- **Actualizar el APK**: `MESAGRI_SERVER=https://mesagri.onrender.com bash apps/android/build.sh`
+  en Linux (Ubuntu) deja un `Mesagri.apk` nuevo (requisitos en la cabecera del script; sin
+  `MESAGRI_SERVER` sale solo la versión autónoma). Se firma con la llave de `apps/android/firma`
+  (no está en GitHub): guárdala, porque las actualizaciones necesitan esa misma llave para
+  instalarse encima.
 - **Publicar la app web**: `npm run build:autonoma` arma la carpeta `apps/web/dist-app`
   (es la misma que `Mesagri-web`); se sube tal cual a cualquier hosting estático con https.
 
@@ -146,18 +186,19 @@ mesagri/
 │  │              calificaciones, soporte, administración, almacenes, cobros, envíos, archivos
 │  ├─ web/        React + Vite: app de los cuatro tipos de usuario, panel web y escenario de la demo
 │  │              (src/app/local: el «servidor» que corre dentro del celular en la versión autónoma)
-│  └─ android/    APK: WebView con la app autónoma, cámara, GPS, voz, archivos (build.sh)
+│  └─ android/    APK: WebView conectado a la nube (o con la app autónoma), cámara, GPS, voz, archivos (build.sh)
 ├─ packages/
 │  └─ shared/     reglas puras (máquina de estados, topes, comisiones, fletes, plazos) y tipos
-├─ db/migrations  esquema MySQL versionado (0001 a 0008)
+├─ db/migrations  esquema MySQL versionado (0001 a 0009)
 ├─ scripts/       instalación y arranque en Windows
 ├─ infra/         Docker Compose (MySQL 8.4 + API) para un servidor
 └─ docs/          arquitectura y decisiones
 ```
 
 - El servidor es la fuente de la verdad: aplica cada acción con las reglas de `packages/shared`,
-  la guarda en MySQL **en una transacción** (solo las filas que cambiaron) y la difunde por
-  Socket.IO. Al arrancar arma todo leyendo las tablas.
+  la guarda en MySQL **en una transacción** (solo las filas que cambiaron) y a cada celular le
+  manda por Socket.IO solo las entidades que cambiaron y su perfil puede ver
+  (`packages/shared/src/patch.ts` y `privacy.ts`). Al arrancar arma todo leyendo las tablas.
 - La hora la pone el servidor (reloj de la demo); los códigos de entrega y recojo los genera él
   al azar; las cuentas de cobro y los códigos van cifrados con AES-256-GCM (14.9).
 - Sin señal, el celular guarda lo que hace y lo envía al volver, sin duplicar (14.5).
@@ -171,16 +212,19 @@ npm ci                 # dependencias
 npm run build          # shared, API y web
 npm run dev:api        # API en http://localhost:3000 (necesita MySQL y .env)
 npm run dev:web        # web con recarga en http://localhost:5173 (usa la API del 3000)
-npm test               # reglas (31 pruebas), MySQL ida y vuelta y API completo (13 pruebas)
-npm run e2e            # recorridos de punta a punta con el servidor (21 pruebas)
+npm test               # reglas y privacidad (33 pruebas), MySQL ida y vuelta y API completo (16 pruebas)
+npm run e2e            # recorridos de punta a punta con el servidor (25 pruebas; con
+                       # MESAGRI_TEAM_KEY=... prueba también la clave del equipo, como en la nube)
 npm run build:autonoma # app autónoma en apps/web/dist-app (APK y app web instalable)
 npm run apk            # Mesagri.apk (Linux, ver apps/android/build.sh)
 # recorridos en la versión autónoma (21 pruebas): servir dist-app y
 # MESAGRI_WEB=http://localhost:8090 MESAGRI_LOCAL=1 npx playwright test (en apps/web)
 ```
 
-Variables en `.env` (ver `.env.example`): puertos, conexión a MySQL, `JWT_SECRET`, `DATA_KEY`,
-`DEMO_MODE` y `DEMO_CLOCK` (`resume`: el reloj de la demo sigue donde quedó al apagar).
+Variables en `.env` (ver `.env.example`): puertos, conexión a MySQL (o `DATABASE_URL`),
+`JWT_SECRET`, `DATA_KEY`, `DEMO_MODE`, `DEMO_CLOCK` (`resume`: el reloj de la demo sigue donde quedó
+al apagar), `TEAM_KEY` (clave del equipo; sin ella, como en la laptop, todo queda abierto),
+`TRUST_PROXY` y `FILES_STORAGE`.
 
 ## Si algo falla
 

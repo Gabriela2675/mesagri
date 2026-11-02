@@ -4,8 +4,11 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
@@ -18,6 +21,7 @@ import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -30,19 +34,29 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
 /**
- * Mesagri para Android. La app web autónoma (assets/www) se abre en un WebView desde una dirección
- * https propia del celular (https://appassets.androidplatform.net), así guarda sus datos, usa el GPS
- * y la cámara como una app normal. Lo que no es de la app (llamadas, mapas, WhatsApp) se abre afuera.
+ * Mesagri para Android.
+ * - Con servidor (BuildInfo.SERVER o el que se elija en la pantalla de conexión): abre la app del
+ *   servidor de Mesagri en la nube. Todos ven lo mismo según su perfil y en vivo. Mientras el servidor
+ *   despierta (el plan gratis se duerme sin uso) muestra una pantalla de conexión.
+ * - Sin internet: «probar sin internet» abre la versión autónoma que viene en el APK (assets/www), con
+ *   datos de ejemplo guardados en el celular, desde una dirección https propia del celular
+ *   (https://appassets.androidplatform.net).
+ * En los dos casos usa el GPS, la cámara, la voz y los archivos como una app normal; lo que no es de
+ * la app (llamadas, mapas, WhatsApp) se abre afuera.
  */
 public class MainActivity extends Activity {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START = "https://" + HOST + "/index.html";
+    private static final String CONNECT = "https://" + HOST + "/conexion.html";
+    private static final String PREFS = "mesagri";
     private static final int REQ_FILE = 11;
     private static final int REQ_LOCATION = 12;
     private static final int REQ_VOICE = 13;
@@ -54,6 +68,10 @@ public class MainActivity extends Activity {
     private String geoOrigin;
     private TextToSpeech tts;
     private boolean ttsReady;
+    /** Servidor de Mesagri (vacío: solo la versión autónoma). */
+    private String server = "";
+    /** Intento de conexión en curso (cada intento nuevo deja sin efecto al anterior). */
+    private volatile int attempt;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -78,9 +96,97 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new AppClient());
         web.setWebChromeClient(new ChromeClient());
 
+        server = cleanServer(getSharedPreferences(PREFS, MODE_PRIVATE).getString("server", BuildInfo.SERVER));
         if (state != null) web.restoreState(state);
-        if (web.getUrl() == null) web.loadUrl(START);
+        if (web.getUrl() == null || CONNECT.equals(web.getUrl())) { if (server.isEmpty()) openLocal(); else connect(); }
         startVoice();
+    }
+
+    /* ---------------- Servidor en la nube ---------------- */
+
+    private static String cleanServer(String s) {
+        if (s == null) return "";
+        String v = s.trim();
+        while (v.endsWith("/")) v = v.substring(0, v.length() - 1);
+        Uri u = Uri.parse(v);
+        if (u.getHost() == null || !("https".equals(u.getScheme()) || "http".equals(u.getScheme()))) return "";
+        return v;
+    }
+
+    private boolean isServer(Uri u) {
+        if (server.isEmpty() || u == null) return false;
+        Uri s = Uri.parse(server);
+        return s.getHost() != null && s.getHost().equalsIgnoreCase(u.getHost()) && s.getScheme() != null && s.getScheme().equals(u.getScheme()) && s.getPort() == u.getPort();
+    }
+
+    private boolean online() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            NetworkInfo n = cm == null ? null : cm.getActiveNetworkInfo();
+            return n != null && n.isConnected();
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /** Pantalla de conexión y, por detrás, se pregunta al servidor si ya está listo (despierta en hasta un minuto). */
+    private void connect() {
+        final int me = ++attempt;
+        web.loadUrl(CONNECT);
+        if (server.isEmpty()) return;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                int offline = 0;
+                for (int i = 1; i <= 45 && me == attempt; i++) {
+                    if (!online()) {
+                        if (++offline >= 2) { if (me == attempt) js("window.__mesagri && __mesagri.offline()"); return; }
+                    } else {
+                        offline = 0;
+                        if (healthy()) {
+                            if (me != attempt) return;
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() { if (me == attempt) web.loadUrl(server + "/"); }
+                            });
+                            return;
+                        }
+                        if (me == attempt) js("window.__mesagri && __mesagri.waiting(" + i + ")");
+                    }
+                    try { Thread.sleep(2500); } catch (InterruptedException e) { return; }
+                }
+                if (me == attempt) js("window.__mesagri && __mesagri.failed()");
+            }
+        }).start();
+    }
+
+    /** ¿El servidor de Mesagri responde y su base de datos está lista? */
+    private boolean healthy() {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(server + "/api/v1/health").openConnection();
+            c.setConnectTimeout(10000);
+            c.setReadTimeout(20000);
+            c.setRequestProperty("Accept", "application/json");
+            c.setRequestProperty("User-Agent", "MesagriApp/" + BuildInfo.VERSION);
+            if (c.getResponseCode() != 200) return false;
+            InputStream in = c.getInputStream();
+            byte[] buf = new byte[4096];
+            int n = in.read(buf);
+            in.close();
+            String body = n > 0 ? new String(buf, 0, n, "UTF-8") : "";
+            return body.contains("\"ok\":true");
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /** Versión autónoma (viene en el APK): datos de ejemplo guardados en este celular, sin internet. */
+    private void openLocal() {
+        attempt++;
+        web.loadUrl(START);
     }
 
     /* ---------------- Voz: guía de audio y dictado ---------------- */
@@ -145,8 +251,20 @@ public class MainActivity extends Activity {
         public boolean shouldOverrideUrlLoading(WebView view, String url) {
             Uri u = Uri.parse(url);
             if ("https".equals(u.getScheme()) && HOST.equals(u.getHost())) return false;
+            if (isServer(u)) return false;
             openOutside(u);
             return true;
+        }
+
+        /** Se cortó la señal o el servidor se reinicia: se vuelve a la pantalla de conexión. */
+        @Override
+        public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+            if (request.isForMainFrame() && isServer(request.getUrl())) connect();
+        }
+
+        @Override
+        public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+            if (request.isForMainFrame() && isServer(request.getUrl()) && response.getStatusCode() >= 500) connect();
         }
     }
 
@@ -306,6 +424,44 @@ public class MainActivity extends Activity {
     /* ---------------- Guardar o compartir archivos (PDF y CSV) ---------------- */
 
     private class Bridge {
+        /** Dirección del servidor de Mesagri ('' si el APK es solo autónomo). */
+        @JavascriptInterface
+        public String server() { return server; }
+
+        @JavascriptInterface
+        public String version() { return BuildInfo.VERSION; }
+
+        /** Pantalla de conexión: intentar otra vez. Versión autónoma: volver a la versión en línea. */
+        @JavascriptInterface
+        public void goOnline() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() { if (server.isEmpty()) openLocal(); else connect(); }
+            });
+        }
+
+        /** Probar sin internet: la versión autónoma con datos de ejemplo. */
+        @JavascriptInterface
+        public void openOffline() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() { openLocal(); }
+            });
+        }
+
+        /** Otro servidor (por ejemplo, si la dirección de la nube cambió). Vacío: el que trae el APK. */
+        @JavascriptInterface
+        public boolean setServer(String url) {
+            final String v = url == null || url.trim().isEmpty() ? cleanServer(BuildInfo.SERVER) : cleanServer(url);
+            if (v.isEmpty() && url != null && !url.trim().isEmpty()) return false;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("server", v).apply();
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() { server = v; if (server.isEmpty()) openLocal(); else connect(); }
+            });
+            return true;
+        }
+
         @JavascriptInterface
         public void saveFile(final String base64, final String filename, final String mime) {
             runOnUiThread(new Runnable() {

@@ -143,6 +143,44 @@ compila con `vite build --mode autonoma` (carpeta `apps/web/dist-app`, rutas rel
 - Cada celular tiene sus propios datos. Para que varios celulares compartan pedidos en vivo se usa
   la versión con servidor.
 
+## En la nube: cada perfil recibe lo suyo
+
+En la nube (Render + Aiven, ver `render.yaml`) el servidor ya no manda el mundo completo a todos.
+
+- **Quién mira** (`apps/api/src/sync/viewer.ts`): el equipo de la demo (encabezado `x-team-key`
+  con la clave `TEAM_KEY`), el panel (sesión de administración), una persona con su sesión o
+  alguien sin sesión.
+- **Qué ve cada uno** (`packages/shared/src/privacy.ts`): ninguna entidad se quita (así los totales
+  y calificaciones salen iguales para todos); se ocultan campos. De las cuentas reales que no son
+  la propia ni una contraparte se ocultan celular, DNI, correo, dirección, quien recibe, cuentas de
+  cobro, mensajes, reclamos, consultas, detalle de disputas y del expediente de verificación. Los
+  avisos llegan solo a su cuenta y la auditoría solo al equipo. Las personas de ejemplo (las del
+  documento) son públicas: cualquiera entra con ellas desde «Ver cuentas de prueba».
+- **Códigos sellados** (`packages/shared/src/ids.ts`): los códigos de entrega y de recojo los ve el
+  comprador; el QR de recojo, el agricultor; la reserva del almacén, el agricultor. A los demás les
+  llega `#huella` (cyrb53 del código con una sal por pedido). El motor compara con
+  `codeMatches()`: el celular del transportista o del agricultor rechaza al instante un código
+  equivocado y acepta el correcto, sin poder leerlo. El servidor tiene siempre los códigos reales.
+- **Cambios por entidad** (`packages/shared/src/patch.ts`): después de cada acción, el motor sabe
+  qué entidades cambiaron (`WorldTracker`, huella JSON de cada una). A cada perfil conectado le
+  llega un mensaje `patch` con su número de orden, la acción (id, tipo, quién, hora) y esas
+  entidades ya filtradas; si aparece una contraparte nueva (le hicieron un pedido), también sus
+  datos de contacto. El celular las reemplaza en su copia (`applyPatch`); si se pierde un número,
+  pide la copia completa (`GET /sync/snapshot`, también filtrada). Las acciones que hace el propio
+  celular se aplican al instante con las reglas (optimista) y se confirman cuando llega su cambio.
+  La prueba `packages/shared/test/privacy.test.ts` comprueba, acción por acción, que la copia de
+  cada perfil es igual a lo que su perfil puede ver del mundo del servidor.
+- **Ingreso sin SMS**: el código se muestra en pantalla. En las cuentas reales solo en un celular de
+  confianza (tabla `trusted_devices`, llave en el encabezado `x-device-key`); «Restablecer acceso»
+  las olvida y el próximo celular donde ingrese ve el código.
+- **Clave del equipo**: protege `/demo/sessions`, `/demo/team`, `/demo/clock`, `/demo/reset` y
+  `/sync/events` (acciones completas). Sin `TEAM_KEY` (la laptop) todo queda abierto como antes.
+- **Base y archivos**: `DATABASE_URL` con TLS (`ssl-mode=REQUIRED`; con `DB_CA_CERT` además se
+  comprueba el servidor), todas las sesiones en UTC, y las fotos y documentos en `file_blobs`
+  (el disco del servidor gratuito se borra en cada reinicio).
+- **APK**: con `MESAGRI_SERVER` abre la app del servidor; mientras el servidor gratuito despierta
+  muestra `conexion.html` y pregunta por `/api/v1/health`; sin internet ofrece la versión autónoma.
+
 ## Simplificaciones respecto del documento
 
 | Documento | MVP | Para el piloto |

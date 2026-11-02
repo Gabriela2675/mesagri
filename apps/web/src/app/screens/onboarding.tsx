@@ -12,7 +12,7 @@ import { DISTRICTS, DISTRICT_BY_CODE, CITY_DISTRICTS, placeLabel, PROVINCES } fr
 import { isRucValid, isDniValid, isPhoneValid, LEVEL_NAME, buyerLimit, farmerLimit, maskDni } from '@mesagri/shared/rules';
 import { digitsFrom, uid } from '@mesagri/shared/ids';
 import { PERSONAS, TEST_RUCS } from '@mesagri/shared/seed';
-import { panelUrl, LOCAL } from '../routes';
+import { panelUrl, LOCAL, IN_APK } from '../routes';
 import { useInstall } from '../install';
 import { liveSub } from '../helpers';
 import { auth, deviceAccounts } from '../net';
@@ -94,10 +94,14 @@ function DemoNote() {
     if (!(await A.confirm({ title: '¿Volver a los datos de ejemplo?', text: 'Se borra lo que hiciste en esta versión de prueba (pedidos, publicaciones, cuentas nuevas) y vuelven las personas y los pedidos de ejemplo.', ok: 'Reiniciar', danger: true }))) return;
     try { await A.store.resetDemo(); } catch { A.toast('No se pudo reiniciar. Intenta de nuevo.', 'err'); }
   };
+  // APK con servidor en la nube: desde la versión de prueba se vuelve a la versión en línea
+  const bridge = (window as any).MesagriAndroid;
+  const cloud = IN_APK && typeof bridge?.server === 'function' ? String(bridge.server() ?? '') : '';
   return (
     <p className="cap center" style={{ margin: ".4em 0 0", color: "#cfe0c1" }}>
       Versión de prueba: las personas y los pedidos son de ejemplo y todo se guarda en este celular.{' '}
       <button className="linkbtn" style={{ color: "#E7F0DC", padding: 0, minHeight: 0, display: 'inline' }} onClick={reset}>Volver a los datos de ejemplo</button>
+      {cloud && <>{' · '}<button className="linkbtn" style={{ color: "#E7F0DC", padding: 0, minHeight: 0, display: 'inline' }} onClick={() => bridge.goOnline()}>Usar la versión en línea</button></>}
     </p>
   );
 }

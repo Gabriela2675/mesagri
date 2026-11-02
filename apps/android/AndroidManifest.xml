@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Mesagri para Android: la app completa corre dentro del celular (versión autónoma). -->
+<!-- Mesagri para Android: se conecta al servidor de Mesagri en la nube (con «probar sin internet»,
+     la versión autónoma con datos de ejemplo dentro del celular). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="pe.mesagri.app"
-    android:versionCode="1"
-    android:versionName="1.0.0">
+    android:versionCode="2"
+    android:versionName="1.1.0">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
