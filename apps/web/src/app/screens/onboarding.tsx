@@ -16,6 +16,7 @@ import { panelUrl, LOCAL, IN_APK } from '../routes';
 import { useInstall } from '../install';
 import { liveSub } from '../helpers';
 import { auth, deviceAccounts } from '../net';
+import { openExternal } from '../platform';
 import { money, dateShort, hhmm } from '@mesagri/shared/format';
 import { DOW_CHIP } from '@mesagri/shared/time';
 import type { Role, VerifCase, Evidence, Org } from '@mesagri/shared/types';
@@ -111,7 +112,7 @@ function DemoNote() {
  * al enviarlo, Mesagri responde al instante con el código (sin costo para nadie).
  */
 export function WhatsAppAsk({ wa, dark, demo }: { wa: { link: string; number: string }; dark?: boolean; demo?: boolean }) {
-  const open = () => { try { window.open(wa.link, '_blank', 'noopener'); } catch { location.href = wa.link; } };
+  const open = () => openExternal(wa.link);
   return (
     <div className="card" style={dark ? { background: "rgba(255,255,255,.1)", color: "#fff", boxShadow: "none" } : undefined} role="region" aria-label="Pedir el código por WhatsApp">
       <div className="row top g8">
@@ -469,7 +470,7 @@ function Otp() {
     try {
       const r = await auth.otp(R.phone ?? '', 'REGISTER');
       regSet(A, { demoCode: r.demoCode, wa: r.channel === 'WHATSAPP_IN' ? r.wa : undefined });
-      if (r.channel === 'WHATSAPP_IN' && r.wa) { try { window.open(r.wa.link, '_blank', 'noopener'); } catch { /* sin ventana */ } return; }
+      if (r.channel === 'WHATSAPP_IN' && r.wa) { openExternal(r.wa.link); return; }
       A.toast(r.demoCode ? `Tu código es ${r.demoCode} (versión de prueba).` : 'Te enviamos otro código.', 'info');
     } catch (e: any) { setErr(e.message); }
   };

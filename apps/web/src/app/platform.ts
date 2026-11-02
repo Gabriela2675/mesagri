@@ -47,3 +47,12 @@ export function callPhone(phone?: string): boolean {
 export function openMap(destination: string): void {
   try { window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`, '_blank', 'noopener'); } catch { /* sin ventana */ }
 }
+
+/** Abre un enlace de otra app (WhatsApp, mapas): en el APK lo abre Android; en el navegador, una pestaña nueva. */
+export function openExternal(url: string) {
+  try {
+    if (/MesagriApp\//.test(navigator.userAgent)) { location.href = url; return; }
+    const w = window.open(url, '_blank', 'noopener');
+    if (!w) location.href = url;
+  } catch { location.href = url; }
+}

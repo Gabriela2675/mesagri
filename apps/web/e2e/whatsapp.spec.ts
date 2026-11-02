@@ -41,7 +41,7 @@ test('registro e ingreso con el código que Mesagri responde por WhatsApp', asyn
   const page = await ctx.newPage();
   const opened: string[] = [];
   await page.exposeFunction('__opened', (u: string) => { opened.push(u); });
-  await page.addInitScript(() => { window.open = ((u: string) => { (window as any).__opened(String(u)); return null; }) as any; });
+  await page.addInitScript(() => { window.open = ((u: string) => { (window as any).__opened(String(u)); return {} as Window; }) as any; });
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
