@@ -19,7 +19,8 @@ import { orgName, userOfOrg, levelChip, PAY_LABEL, itemsShort, shipStatusText, s
 import { placeLabel, districtName } from '@mesagri/shared/ubigeo';
 import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE, callPhone } from '../platform';
-import { PrefsSheet, PrivacySheet } from './common';
+import { PrefsSheet, PrivacySheet, NameSheet, PermsSheet } from './common';
+import { canAskPermissions } from '../platform';
 import { MESAGRI_YAPE } from './farmer2';
 import type { Org, Shipment, SubOrder, World, PayMethod } from '@mesagri/shared/types';
 
@@ -88,6 +89,8 @@ function Membership() {
           {item('users', 'Equipo y locales', `${1 + (org.members ?? []).filter(m => m.kind === 'EQUIPO').length} usuarios · ${(org.locales ?? []).length || 1} ${((org.locales ?? []).length || 1) === 1 ? 'local' : 'locales'}`, () => A.go('B-23'))}
         </div></Card>
         <Card><div className="list">
+          {item('user', 'Tu nombre', `Te llamamos ${me.shortName}`, () => A.sheet(<NameSheet />))}
+          {canAskPermissions() && item('smartphone', 'Permisos de la app', 'Cámara para las fotos', () => A.sheet(<PermsSheet />))}
           {item('globe', 'Idioma y letra', `Castellano · letra ${me.prefs.textScale > 1.1 ? 'grande' : 'normal'}`, () => A.sheet(<PrefsSheet />))}
           {item('message-circle', 'Mensajes', 'Conversaciones por pedido', () => A.go('A-18'))}
           {item('lock', 'Privacidad y mis datos', 'Descargar o borrar mis datos', () => A.sheet(<PrivacySheet />))}

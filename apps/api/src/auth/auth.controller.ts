@@ -19,7 +19,7 @@ class RegisterDto {
   @ApiPropertyOptional() device?: string;
 }
 class LoginDto { @ApiProperty({ example: '951234678' }) phone!: string; @ApiProperty({ example: '123456' }) code!: string; @ApiPropertyOptional() device?: string; @ApiPropertyOptional({ enum: ['FARMER', 'BUYER', 'WAREHOUSE', 'CARRIER'], description: 'Tipo de cuenta que eligió la persona; si no coincide responde 409 ROLE_MISMATCH' }) role?: string; }
-class AdminLoginDto { @ApiProperty({ example: 'carlos@mesagri.pe' }) email!: string; @ApiProperty() password!: string; @ApiProperty({ description: 'Código de 6 dígitos de la app de autenticación' }) code!: string; @ApiPropertyOptional() device?: string; }
+class AdminLoginDto { @ApiProperty({ example: 'majo@mesagri.pe' }) email!: string; @ApiProperty() password!: string; @ApiProperty({ description: 'Código de 6 dígitos de la app de autenticación' }) code!: string; @ApiPropertyOptional() device?: string; }
 class RefreshDto { @ApiProperty() refreshToken!: string; }
 class PrefsDto { @ApiPropertyOptional({ enum: ['es', 'qu', 'ay'] }) lang?: string; @ApiPropertyOptional() audioGuide?: boolean; @ApiPropertyOptional() bilingual?: boolean; @ApiPropertyOptional({ enum: [1, 1.25, 1.5] }) textScale?: number; @ApiPropertyOptional() dataSaver?: boolean; @ApiPropertyOptional({ enum: ['coma', 'punto'] }) numFmt?: string; }
 class MePatchDto { @ApiPropertyOptional() address?: string; @ApiPropertyOptional() receiver?: string; @ApiPropertyOptional() district?: string; }
@@ -50,8 +50,37 @@ export class AuthController {
   login(@Body() b: LoginDto, @Headers('x-device-key') key?: string) { return this.auth.login(b.phone, b.code, b.device, b.role, key); }
 
   @Post('auth/admin/login') @HttpCode(200)
-  @ApiOperation({ summary: 'Ingreso al panel web: correo, contraseña (Argon2id) y doble factor (TOTP)', description: 'Cinco intentos fallidos bloquean la cuenta 15 minutos.' })
+  @ApiOperation({ summary: 'Ingreso al panel web: correo, contraseña (Argon2id) y doble factor (TOTP)', description: 'Cinco intentos fallidos bloquean la cuenta 15 minutos. Con una clave temporal (persona nueva del equipo) no pide código: responde setup con el permiso y el secreto del doble factor para el primer ingreso (/auth/admin/setup).' })
   adminLogin(@Body() b: AdminLoginDto, @Req() req: Request) { return this.auth.adminLogin(b.email, b.password, b.code, ip(req), b.device); }
+
+  @Post('auth/admin/setup') @HttpCode(200)
+  @ApiOperation({ summary: 'Primer ingreso al panel: con el permiso de /auth/admin/login (setup.token), la persona crea su contraseña y confirma su doble factor', description: 'Devuelve la sesión. El permiso vence a los 20 minutos y sirve una sola vez.' })
+  adminSetup(@Body() b: { token?: string; password?: string; code?: string; device?: string }, @Req() req: Request) { return this.auth.adminSetup(String(b?.token ?? ''), String(b?.password ?? ''), String(b?.code ?? ''), ip(req), b?.device); }
+
+  @Get('auth/admin/me') @Auth('ADMIN')
+  @ApiOperation({ summary: 'Cómo entra al panel la persona del equipo: demo = todavía usa la clave de prueba de la demo' })
+  adminMe(@Me() u: AuthUser) { return this.auth.adminMe(u.id); }
+
+  @Post('auth/admin/2fa/start') @HttpCode(200) @Auth('ADMIN')
+  @ApiOperation({ summary: 'Hacer suya la cuenta o pasar el doble factor a otro celular: devuelve el secreto nuevo para escanear', description: 'Con una cuenta propia pide la contraseña actual (current).' })
+  twoFactorStart(@Me() u: AuthUser, @Body() b: { current?: string }) { return this.auth.twoFactorStart(u.id, String(b?.current ?? '')); }
+
+  @Post('auth/admin/2fa/finish') @HttpCode(200) @Auth('ADMIN')
+  @ApiOperation({ summary: 'Confirma el código del doble factor nuevo (y la contraseña nueva, obligatoria si era una cuenta de prueba); cierra las otras sesiones' })
+  twoFactorFinish(@Me() u: AuthUser, @Body() b: { token?: string; code?: string; password?: string }, @Req() req: Request) {
+    const fam = this.jwtFamily(req);
+    return this.auth.twoFactorFinish(u.id, String(b?.token ?? ''), String(b?.code ?? ''), b?.password, fam);
+  }
+
+  /** Familia de la sesión con la que se hace el pedido (para no cerrarla). */
+  private jwtFamily(req: Request): string | undefined {
+    const raw = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    try { return (JSON.parse(Buffer.from(raw.split('.')[1] ?? '', 'base64url').toString('utf8')) as { fam?: string }).fam; } catch { return undefined; }
+  }
+
+  @Post('auth/admin/password') @HttpCode(200) @Auth('ADMIN')
+  @ApiOperation({ summary: 'Cambia la contraseña del panel (con la actual)' })
+  adminPassword(@Me() u: AuthUser, @Body() b: { current?: string; next?: string }) { return this.auth.adminPassword(u.id, String(b?.current ?? ''), String(b?.next ?? '')); }
 
   @Post('auth/refresh') @HttpCode(200)
   @ApiOperation({ summary: 'Renueva la sesión (token de refresco rotativo)', description: 'Si se reutiliza un token ya rotado, se cierran todas las sesiones del usuario.' })

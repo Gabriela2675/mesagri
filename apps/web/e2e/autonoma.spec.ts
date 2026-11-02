@@ -97,7 +97,7 @@ test('el equipo entra al panel desde la app, con clave y código de doble factor
   const w = page.locator('.ph-in');
   await expect(screen(w)).toHaveAttribute('data-screen', 'W-01', { timeout: 20_000 });
   // clave equivocada: no entra
-  await w.getByLabel('Correo del equipo').fill('carlos@mesagri.pe');
+  await w.getByLabel('Correo del equipo').fill('majo@mesagri.pe');
   await w.locator('input[type=password]').fill('otra-clave');
   await w.getByLabel(/Código de tu app/).fill('123456');
   await w.getByRole('button', { name: 'Ingresar', exact: true }).click();
@@ -165,6 +165,10 @@ test('en el APK: dictado y voz del celular, y los archivos se guardan o comparte
   await f.getByRole('button', { name: 'Toca y habla' }).click();
   await expect(screen(f)).toHaveAttribute('data-screen', 'A-11');
   await expect(f.getByText('Cebolla roja · 50 kg')).toBeVisible();
+  // la foto de la cosecha, elegida de la galería del celular
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAEElEQVR4nGM4UaEBRww4OQBQxhDhqjivfwAAAABJRU5ErkJggg==', 'base64');
+  await f.locator('input[data-fuente="galeria"]').first().setInputFiles({ name: 'cosecha.png', mimeType: 'image/png', buffer: png });
+  await expect(f.getByText('Con foto')).toBeVisible();
   await tap(f, 'Publicar', true);
   await expect(screen(f)).toHaveAttribute('data-screen', 'A-09');
   await nav(f, 'Perfil');

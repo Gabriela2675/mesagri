@@ -20,6 +20,10 @@ test('publicar con la voz: la frase pasa sola a «Revisa y publica» y el compra
   await expect(f.getByText('Dijiste')).toBeVisible();
   await expect(f.getByText('Cebolla roja · 50 kg')).toBeVisible();
   await expect(f.getByText('S/ 1,50 por kg')).toBeVisible();
+  // sin foto no se publica: se agrega ahí mismo (en el escenario, con una de ejemplo)
+  await expect(f.getByRole('button', { name: 'Publicar', exact: true })).toBeDisabled();
+  await f.getByRole('button', { name: 'Usar foto de ejemplo: Foto de la cosecha' }).first().click();
+  await expect(f.getByText('Con foto')).toBeVisible();
   await tap(f, 'Publicar', true);
   await expect(screen(f)).toHaveAttribute('data-screen', 'A-09');
   await expect(f.getByText('50 kg · quedan 50 kg')).toBeVisible();
@@ -68,7 +72,7 @@ test('almacén aliado: reserva con cálculo, ingreso pesado con constancia y ven
   expect(errors).toEqual([]);
 });
 
-test('estado de cuenta: Wilber paga su comisión por Yape y Carlos lo concilia en el panel (RN-40)', async ({ page }) => {
+test('estado de cuenta: Wilber paga su comisión por Yape y Gaby lo concilia en el panel (RN-40)', async ({ page }) => {
   const errors = await start(page);
   const f = phone(page, 0);
   await f.getByRole('button', { name: /Estado de cuenta: S\/ 41,40/ }).click();
@@ -140,7 +144,7 @@ test('registro: un agricultor nuevo completa los 5 pasos y Lucía aprueba su niv
 test('panel web: cada rol ve solo sus secciones y todas abren sin errores (Ley 29733)', async ({ page }) => {
   const errors = await start(page);
   const expected: Record<string, RegExp[]> = {
-    Carlos: [/^Inicio/, /^Verificaciones/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Almacenes/, /^Transportistas/, /^Cobros/, /^Catálogo/, /^Reglas|^Configuración/, /^Reportes/, /^Reclamos|^Libro/, /^Auditoría/],
+    Majo: [/^Inicio/, /^Verificaciones/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Almacenes/, /^Transportistas/, /^Cobros/, /^Catálogo/, /^Reglas|^Configuración/, /^Reportes/, /^Reclamos|^Libro/, /^Auditoría/, /^Equipo/],
     Lucía: [/^Inicio/, /^Verificaciones/, /^Almacenes/, /^Transportistas/, /^Usuarios/],
     Diana: [/^Inicio/, /^Envíos/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Reclamos|^Libro/],
     Ana: [/^Inicio/, /^Reportes/],
@@ -159,5 +163,35 @@ test('panel web: cada rol ve solo sus secciones y todas abren sin errores (Ley 2
     }
     void buttons;
   }
+  expect(errors).toEqual([]);
+});
+
+test('fotos de la cosecha: el agricultor pone varias fotos a su publicación y el comprador las ve en la galería', async ({ page }) => {
+  const errors = await start(page);
+  const f = phone(page, 0), b = phone(page, 1);
+  await f.getByRole('button', { name: /Publicaciones activas/ }).click();
+  await expect(screen(f)).toHaveAttribute('data-screen', 'A-09');
+  const card = f.locator('.card', { has: page.getByText('Papa amarilla', { exact: true }) }).last();
+  await card.getByRole('button', { name: 'Editar y poner fotos' }).click();
+  const sheet = f.getByRole('dialog');
+  await expect(sheet.getByText('Hasta 3 fotos')).toBeVisible();
+  await sheet.getByRole('button', { name: 'Usar foto de ejemplo: Foto de la cosecha' }).click();
+  await expect(sheet.getByText('1 de 3 fotos')).toBeVisible();
+  await sheet.getByRole('button', { name: 'Usar foto de ejemplo: Foto de la cosecha' }).click();
+  await expect(sheet.getByText('2 de 3 fotos')).toBeVisible();
+  // la segunda pasa a ser la portada
+  await sheet.getByRole('button', { name: 'Usar la foto 2 de portada' }).click();
+  await sheet.getByRole('button', { name: 'Guardar cambios' }).click();
+  await expect(f.getByText('Guardamos los cambios.')).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Editar', exact: true })).toBeVisible();
+  // Doña Charo ve las dos fotos de Wilber
+  await b.getByLabel('Buscar productos').fill('papa');
+  await b.getByLabel('Buscar productos').press('Enter');
+  await b.getByRole('button', { name: /Papa amarilla, S\/ 2,70 por kilo, de Wilber/ }).first().click();
+  await expect(screen(b)).toHaveAttribute('data-screen', 'B-07');
+  const gallery = b.getByRole('group', { name: /Fotos: Papa amarilla/ });
+  await expect(gallery.getByText('1 de 2')).toBeVisible();
+  await gallery.getByRole('button', { name: 'Ver la foto 2' }).click();
+  await expect(gallery.getByText('2 de 2')).toBeVisible();
   expect(errors).toEqual([]);
 });

@@ -19,7 +19,8 @@ export { HANDLERS, SYSTEM_USER, notify, audit, NOTIF_CAP, AUDIT_CAP } from './en
 export { MSG_CAP } from './engine/orders';
 export { nextDeadline, hasDue } from './engine/tick';
 export { fmtVal, accruedRent } from './engine/billing';
-export { canDo, isTitular, memberOf, isPro, FREQ_LABEL, nextWeekday, scheduleRunAt, draftExpiresAt, buildDraft, farmersFor, localOf, MEMBER_PERM } from './engine/r2';
+export { canDo, isTitular, memberOf, isPro, FREQ_LABEL, nextWeekday, scheduleRunAt, draftExpiresAt, buildDraft, farmersFor, localOf, MEMBER_PERM, ADMIN_ROLE_INFO } from './engine/r2';
 export { PROTOCOL } from './protocol';
 export * from './privacy';
 export * from './patch';
+export { defaultPrefs } from './engine/accounts';

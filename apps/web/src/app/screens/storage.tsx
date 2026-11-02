@@ -19,7 +19,8 @@ import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { RoleHead, RucLookup, regGet, regSet, districtOptions } from './onboarding';
 import { StatementView, MESAGRI_YAPE } from './farmer2';
-import { PrefsSheet } from './common';
+import { PrefsSheet, NameSheet, PermsSheet } from './common';
+import { canAskPermissions } from '../platform';
 import { accruedRent } from '@mesagri/shared/engine/billing';
 import type { Org, Lot, Booking, ReleaseOrder, Evidence, World } from '@mesagri/shared/types';
 
@@ -872,7 +873,7 @@ function WhProfile() {
         </div></Card>
         <Btn full kind="sec" onClick={() => A.sheet(<EditCapacity />)}>Editar capacidad y tarifas</Btn>
         <Card><div className="list">
-          {[['message-circle', 'Mensajes', () => A.go('A-18')], ['bell', 'Avisos', () => A.go('A-29')], ['shield-check', 'Mi verificación', () => A.go('C-05')], ['globe', 'Idioma y lectura', () => A.sheet(<PrefsSheet />)], ['circle-question-mark', 'Ayuda y reclamos', () => A.go('A-19')], ['log-out', 'Cerrar sesión', () => A.logout()]].map(([i, l, f]) => <button key={l as string} className="li" onClick={f as () => void}><ICirc n={i as string} /><b className="bodym grow">{l as string}</b><Icon n="chevron-right" s="1.1em" /></button>)}
+          {[['message-circle', 'Mensajes', () => A.go('A-18')], ['bell', 'Avisos', () => A.go('A-29')], ['shield-check', 'Mi verificación', () => A.go('C-05')], ['user', 'Tu nombre', () => A.sheet(<NameSheet />)], ...(canAskPermissions() ? [['smartphone', 'Permisos de la app', () => A.sheet(<PermsSheet />)]] : []), ['globe', 'Idioma y lectura', () => A.sheet(<PrefsSheet />)], ['circle-question-mark', 'Ayuda y reclamos', () => A.go('A-19')], ['log-out', 'Cerrar sesión', () => A.logout()]].map(([i, l, f]) => <button key={l as string} className="li" onClick={f as () => void}><ICirc n={i as string} /><b className="bodym grow">{l as string}</b><Icon n="chevron-right" s="1.1em" /></button>)}
         </div></Card>
       </div>
     </Screen>

@@ -569,3 +569,21 @@ button.stat:hover { box-shadow: var(--elev2); }
   .stage.appmode { background: var(--forest); }
   .stage.appmode .ph { height: min(860px, 100vh); margin: auto; border-radius: 28px; overflow: hidden; box-shadow: var(--elev3); }
 }
+
+/* Equipo de Mesagri (W-19) y Mi cuenta (W-20) */
+.rolepick { display: flex; gap: 10px; align-items: flex-start; border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; cursor: pointer; background: #fff; }
+.rolepick.on { border-color: var(--field); background: var(--mint); }
+.rolepick input { margin-top: 3px; accent-color: var(--field); flex: none; }
+.rolepick span { display: flex; flex-direction: column; gap: 2px; }
+.rolepick small { color: var(--moss); font-size: 12.5px; line-height: 1.35; }
+.tempkey { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 22px; font-weight: 800; letter-spacing: .06em; background: var(--mint); color: var(--field); border-radius: 12px; padding: 10px 14px; text-align: center; user-select: all; overflow-wrap: anywhere; }
+.totpbox { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.totpbox ol { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; flex: 1 1 220px; min-width: 0; }
+.totpkey { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 800; letter-spacing: .05em; overflow-wrap: anywhere; }
+.permtable th.c, .permtable td.c { text-align: center; width: 15%; }
+.permtable td.c b { color: var(--field); }
+
+/* Galería de fotos de una publicación */
+.thumb { width: 4.2em; flex: none; padding: 0; border: 2px solid transparent; border-radius: .8em; background: transparent; cursor: pointer; }
+.thumb.on { border-color: var(--field); }
+.thumb .photo { border-radius: .6em; }

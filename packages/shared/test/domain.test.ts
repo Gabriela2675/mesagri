@@ -301,7 +301,7 @@ describe('Antes de la versión 2, ya en el MVP · solicitudes, programados, equi
     const w = fresh();
     const ap = { scheduleId: 'prg-a02', orderId: 'o-prg', subOrderIds: ['so-prg1', 'so-prg2'], useAlt: {} };
     expect(run(w, 'u-rosaq', 'SCHEDULE_APPROVE', ap).error?.code).toBe('NO_PERMISSION');
-    expect(run(w, 'u-rosaq', 'TEAM_ADD', { userId: 'u-kevin', name: 'Kevin Torres', phone: '951357246', perms: ['PEDIR'] }).error?.code).toBe('TITULAR_ONLY');
+    expect(run(w, 'u-rosaq', 'TEAM_ADD', { userId: 'u-kevint', name: 'Kevin Torres', phone: '951357246', perms: ['PEDIR'] }).error?.code).toBe('TITULAR_ONLY');
     expect(run(w, 'u-dario', 'SCHEDULE_APPROVE', ap).ok).toBe(true);
     expect(w.subOrders['so-prg1'].sellerOrgId).toBe('org-wilber');
     expect(w.schedules['prg-a02'].draft?.status).toBe('APPROVED');
@@ -323,7 +323,7 @@ describe('Antes de la versión 2, ya en el MVP · solicitudes, programados, equi
     const w = fresh();
     const maca = { name: 'Maca', category: 'TUBERCULOS', units: ['kg', 'saco'], chacra: 7, mayorista: 9.5, perishDays: 120, storable: true, synonyms: [] };
     expect(run(w, 'u-ana', 'CATALOG_ADD', maca).ok).toBe(false);
-    expect(run(w, 'u-carlos', 'CATALOG_ADD', maca).ok).toBe(true);
+    expect(run(w, 'u-majo', 'CATALOG_ADD', maca).ok).toBe(true);
     expect(Object.values(w.catalogExtra).some(x => x.name === 'Maca')).toBe(true);
     expect(product(Object.keys(w.catalogExtra)[0]).name).toBe('Maca');
     expect(run(w, 'u-lucia', 'ACCESS_RESET', { orgId: 'org-wilber' }).ok).toBe(false);

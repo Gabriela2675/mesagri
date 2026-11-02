@@ -87,11 +87,11 @@ export class DemoController {
   }
 
   @Post('reset') @HttpCode(200)
-  @ApiOperation({ summary: 'Reinicia la demo: vuelve al martes 3 de noviembre de 2026, 8:30, con los datos de ejemplo' })
-  async reset(@Headers('x-team-key') key?: string) {
+  @ApiOperation({ summary: 'Reinicia la demo: vuelve al martes 3 de noviembre de 2026, 8:30, con los datos de ejemplo', description: 'El equipo de Mesagri (cuentas del panel creadas o hechas propias) se conserva. Con {"team": true} también vuelve a las cuentas de prueba del equipo.' })
+  async reset(@Headers('x-team-key') key?: string, @Body() b?: { team?: boolean }) {
     demoOnly();
     requireTeam(key);
-    await this.engine.reset();
+    await this.engine.reset({ team: b?.team === true });
     return { ok: true, epoch: this.engine.epoch, simNow: this.engine.simNow() };
   }
 }

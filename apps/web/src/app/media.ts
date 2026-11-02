@@ -171,7 +171,7 @@ try {
 } catch { /* sin síntesis */ }
 
 /** En el APK de Android la voz la pone el celular (texto a voz y dictado de Google). */
-interface AndroidVoice { speak?(text: string): void; stopSpeaking?(): void; canSpeak?(): boolean; listen?(): void }
+interface AndroidVoice { speak?(text: string): void; stopSpeaking?(): void; canSpeak?(): boolean; listen?(): void; stopListening?(): void }
 const androidVoice = (): AndroidVoice | undefined => { try { return (globalThis as any).MesagriAndroid; } catch { return undefined; } };
 
 function spokenText(text: string): string {
@@ -221,15 +221,18 @@ export function listen(onPartial?: (t: string) => void): { done: Promise<string>
   const Rec = (globalThis as any).SpeechRecognition || (globalThis as any).webkitSpeechRecognition;
   const av = androidVoice();
   if (!Rec && av?.listen) {
-    // APK: el dictado de Google abre su ventana y devuelve la frase
+    // APK: pide el permiso del micrófono y escucha dentro de la app (o abre el dictado de Google)
+    const g = globalThis as any;
     const done = new Promise<string>((resolve, reject) => {
-      (globalThis as any).__mesagriHeard = (text: string | null, err: string | null) => {
-        (globalThis as any).__mesagriHeard = undefined;
+      g.__mesagriPartial = (t: string) => { if (t && t.trim()) onPartial?.(t.trim()); };
+      g.__mesagriHeard = (text: string | null, err: string | null) => {
+        g.__mesagriHeard = undefined;
+        g.__mesagriPartial = undefined;
         if (text && text.trim()) { onPartial?.(text.trim()); resolve(text.trim()); } else reject(new Error(err || 'No te escuchamos. Intenta otra vez, más cerca del celular.'));
       };
     });
     try { av.listen(); } catch { /* sin dictado */ }
-    return { done, stop: () => {} };
+    return { done, stop: () => { try { av.stopListening?.(); } catch { /* sin dictado */ } } };
   }
   if (!Rec) return { done: Promise.reject(new Error('Este navegador no reconoce la voz. Escribe la frase o elige una de ejemplo.')), stop: () => {} };
   const r = new Rec();

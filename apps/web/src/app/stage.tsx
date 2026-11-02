@@ -49,7 +49,7 @@ export function defaultUi(): UiState {
   if (MODE === 'panel') return { mode: 'web', count: 1, active: 'web', showIds: false, guide: false, devices: [{ ...dev('web', undefined, 'web'), stack: [{ s: 'W-01' }] }] };
   return {
     mode: 'phones', count: wide >= 1320 ? 3 : 2, active: 'd1', showIds: false, guide: false,
-    devices: [dev('d1', 'u-wilber'), dev('d2', 'u-charo'), dev('d3', 'u-julio'), dev('web', 'u-carlos', 'web')],
+    devices: [dev('d1', 'u-wilber'), dev('d2', 'u-charo'), dev('d3', 'u-julio'), dev('web', 'u-gaby', 'web')],
   };
 }
 

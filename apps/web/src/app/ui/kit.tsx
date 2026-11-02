@@ -218,10 +218,10 @@ export function Spk({ text, label = 'Escuchar' }: { text: string; label?: string
 }
 
 /* ---------- QR ---------- */
-export function QR({ text, size = 120, dark }: { text: string; size?: number | string; dark?: boolean }) {
+export function QR({ text, size = 120, dark, label }: { text: string; size?: number | string; dark?: boolean; label?: string }) {
   const { d, n } = qrPath(text);
   return (
-    <svg width={size} height={size} viewBox={`-2 -2 ${n + 4} ${n + 4}`} role="img" aria-label={`Código QR ${text}`} style={{ background: '#fff', borderRadius: '10px', flex: 'none', boxShadow: dark ? undefined : 'inset 0 0 0 1px #D5DFD1' }}>
+    <svg width={size} height={size} viewBox={`-2 -2 ${n + 4} ${n + 4}`} role="img" aria-label={label ?? `Código QR ${text}`} style={{ background: '#fff', borderRadius: '10px', flex: 'none', boxShadow: dark ? undefined : 'inset 0 0 0 1px #D5DFD1' }}>
       <path d={d} fill="#1E3F20" shapeRendering="crispEdges" />
     </svg>
   );
@@ -233,10 +233,13 @@ export function Photo({ id, label, onClick }: { id?: string; label?: string; onC
   const [src, setSrc] = useState<string | undefined>(id ? (seedPhoto(id) ?? A.photos.peek(id)) : undefined);
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const now = id ? (seedPhoto(id) ?? A.photos.peek(id)) : undefined;
     setSrc(now);
-    if (id && !now) A.photos.get(id).then(v => { if (alive) setSrc(v); });
-    return () => { alive = false; };
+    // una foto que el otro celular todavía está subiendo aparece sola en unos segundos
+    const load = (n: number) => { A.photos.get(id!).then(v => { if (!alive) return; if (v) setSrc(v); else if (n < 4) timer = setTimeout(() => load(n + 1), 3000 * 2 ** n); }); };
+    if (id && !now) load(0);
+    return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [id]);
   const inner = <>{src ? <img src={src} alt={label ?? 'Foto'} loading="lazy" /> : <Icon n="camera" s="2em" w={1.6} />}{label && <span className="lab">{label}</span>}</>;
   return onClick ? <button className="photo" onClick={onClick} aria-label={label}>{inner}</button> : <div className="photo">{inner}</div>;
@@ -278,6 +281,75 @@ export function PhotoPick({ value, onChange, label, kind = 'producto', sample }:
       </button>
       <button className="linkbtn" onClick={useSample} style={{ alignSelf: "flex-start", fontSize: ".8em", padding: ".2em" }} aria-label={`Usar foto de ejemplo: ${label}`}>Usar ejemplo</button>
       <input ref={inp} type="file" accept="image/*" capture="environment" className="sr" tabIndex={-1} onChange={(e: any) => { choose(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} />
+    </div>
+  );
+}
+
+/**
+ * Varias fotos (hasta max): tomarlas con la cámara o elegirlas de la galería. La primera es la
+ * portada. Las de ejemplo (dibujos) solo en el escenario de la demo: en un celular, fotos de verdad.
+ */
+export function PhotosPick({ value, onChange, max = 3, label, kind = 'producto', sample }: { value: string[]; onChange: (ids: string[]) => void; max?: number; label: string; kind?: string; sample?: Parameters<typeof samplePhoto>[1] }) {
+  const A = useApp();
+  const cam = useRef<HTMLInputElement>(null);
+  const gal = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const room = Math.max(0, max - value.length);
+  const add = async (files: File[], source: 'cam' | 'gal') => {
+    if (!files.length) return;
+    setBusy(true);
+    const ids: string[] = [];
+    for (const f of files.slice(0, room)) {
+      try {
+        const data = await compressImage(f, 1280, 300_000);
+        const id = `ph-${source}-${uid()}`;
+        await A.photos.put(id, data, { kind, userId: A.dev.userId });
+        ids.push(id);
+      } catch { A.toast('No pudimos leer una de las fotos. Prueba con otra.', 'err'); }
+    }
+    if (files.length > room) A.toast(`Entran hasta ${max} fotos: usamos las primeras.`, 'info');
+    setBusy(false);
+    if (ids.length) onChange([...value, ...ids]);
+  };
+  const useSample = async () => {
+    const data = samplePhoto(kind, { label, ...(sample ?? {}) });
+    if (!data) return;
+    const id = 'ph-' + uid();
+    await A.photos.put(id, data, { kind, userId: A.dev.userId });
+    onChange([...value, id]);
+  };
+  return (
+    <div className="stack tight">
+      {value.length > 0 && <div className="photos">{value.map((id, i) => (
+        <div key={id} className="stack tight">
+          <Photo id={id} label={i === 0 ? 'Portada' : `Foto ${i + 1}`} />
+          <div className="row between" style={{ fontSize: '.8em' }}>
+            {i > 0 ? <button className="linkbtn" style={{ padding: '.2em 0' }} onClick={() => onChange([id, ...value.filter(x => x !== id)])} aria-label={`Usar la foto ${i + 1} de portada`}>Portada</button> : <span />}
+            <button className="linkbtn" style={{ padding: '.2em 0' }} onClick={() => onChange(value.filter(x => x !== id))} aria-label={`Quitar la foto ${i + 1}`}>Quitar</button>
+          </div>
+        </div>
+      ))}</div>}
+      {room > 0 && <div className="row g8 wrap">
+        <Btn sm kind="sec" icon="camera" loading={busy} onClick={() => cam.current?.click()}>{value.length ? 'Tomar otra foto' : 'Tomar foto'}</Btn>
+        <Btn sm kind="sec" icon="image" onClick={() => gal.current?.click()}>Elegir de la galería</Btn>
+        {A.store.mode === 'stage' && <button className="linkbtn" onClick={useSample} style={{ fontSize: '.8em', padding: '.2em' }} aria-label={`Usar foto de ejemplo: ${label}`}>Usar ejemplo</button>}
+      </div>}
+      <div className="cap">{value.length ? `${value.length} de ${max} fotos` : `Hasta ${max} fotos`}</div>
+      <input ref={cam} type="file" accept="image/*" capture="environment" className="sr" tabIndex={-1} aria-label={`Tomar foto: ${label}`} data-fuente="camara" onChange={(e: any) => { void add([...(e.currentTarget.files ?? [])], 'cam'); e.currentTarget.value = ''; }} />
+      <input ref={gal} type="file" accept="image/*" multiple className="sr" tabIndex={-1} aria-label={`Elegir de la galería: ${label}`} data-fuente="galeria" onChange={(e: any) => { void add([...(e.currentTarget.files ?? [])], 'gal'); e.currentTarget.value = ''; }} />
+    </div>
+  );
+}
+
+/** Fotos de una publicación: la portada grande y las demás para pasar con un toque. */
+export function Gallery({ ids, label }: { ids: string[]; label: string }) {
+  const [i, setI] = useState(0);
+  useEffect(() => { if (i >= ids.length) setI(0); }, [ids.length]);
+  if (!ids.length) return null;
+  return (
+    <div className="stack tight" role="group" aria-label={`Fotos: ${label}`}>
+      <Photo id={ids[Math.min(i, ids.length - 1)]} label={ids.length > 1 ? `${Math.min(i, ids.length - 1) + 1} de ${ids.length}` : undefined} />
+      {ids.length > 1 && <div className="row g8">{ids.map((id, k) => <button key={id} className={'thumb' + (k === i ? ' on' : '')} onClick={() => setI(k)} aria-label={`Ver la foto ${k + 1}`} aria-pressed={k === i ? 'true' : 'false'}><Photo id={id} /></button>)}</div>}
     </div>
   );
 }

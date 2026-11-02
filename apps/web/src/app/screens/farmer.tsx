@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { reg } from './registry';
 import { HelperBanner } from './r2';
 import { useApp, type AppCtx } from '../ctx';
-import { Screen, Btn, Icon, Field, Inp, Sel, Tog, Card, Chip, ChipBtn, Seg, Kv, Av, ICirc, Empty, Note, SheetBody, Tile, Prog, Stat, Due, Timeline, Photo, PhotoPick, Spk, Qty, BarAct, Stars as Starsx, type TlStep } from '../ui/kit';
+import { Screen, Btn, Icon, Field, Inp, Sel, Tog, Card, Chip, ChipBtn, Seg, Kv, Av, ICirc, Empty, Note, SheetBody, Tile, Prog, Stat, Due, Timeline, Photo, PhotoPick, PhotosPick, Gallery, Spk, Qty, BarAct, Stars as Starsx, type TlStep } from '../ui/kit';
 import { PRODUCTS, product, suggestedPricePerKg, UNIT_LABEL, unitKgFor, CATEGORY_LABEL, allProducts } from '@mesagri/shared/catalog';
 import { commissionPreview, farmerLimit, priceDeviation, plausibility, taxDocsFor, TAXDOC_LABEL, r2 } from '@mesagri/shared/rules';
 import { activeListings, reservedFreeSlots, overdueStatement, subOrdersOf, orgStats, pricePerKg } from '@mesagri/shared/queries';
@@ -193,7 +193,7 @@ function ListingCard({ l }: { l: Listing }) {
   return (
     <Card>
       <div className="row top">
-        <Tile pid={l.productId} />
+        {l.photoIds[0] ? <div style={{ width: '3.6em', flex: 'none' }}><Photo id={l.photoIds[0]} label={undefined} /></div> : <Tile pid={l.productId} />}
         <div className="grow">
           <div className="row between"><b className="h3" style={{ fontSize: "1em" }}>{p.name}{l.variety ? ` ${l.variety}` : ''}</b><Chip tone={st.tone}>{st.l}</Chip></div>
           <div className="cap">{numTrim(l.qtyTotal)} {u} · quedan {numTrim(l.available)} {u}{l.reserved ? ` · ${numTrim(l.reserved)} en pedidos` : ''}{l.fromLotId ? ' · desde el almacén' : ''}{l.requestId ? ` · venta por solicitud ${A.w.requests[l.requestId]?.code ?? ''}` : ''}</div>
@@ -204,7 +204,7 @@ function ListingCard({ l }: { l: Listing }) {
       <div className="row between mt wrap">
         <b className="price bodym">{l.unit === 'kg' ? `${money(l.price)} por kg` : `${money(l.price)} por ${UNIT_LABEL[l.unit].one}`}</b>
         <div className="row g8">
-          {['ACTIVE', 'PAUSED', 'SOLD_OUT'].includes(l.status) && <Btn xs kind="sec" icon="pencil" onClick={() => A.sheet(<EditListing id={l.id} />)}>Editar</Btn>}
+          {['ACTIVE', 'PAUSED', 'SOLD_OUT'].includes(l.status) && <Btn xs kind="sec" icon="pencil" onClick={() => A.sheet(<EditListing id={l.id} />)}>{l.photoIds.length ? 'Editar' : 'Editar y poner fotos'}</Btn>}
           {l.status === 'ACTIVE' && <Btn xs kind="sec" onClick={() => A.act('LISTING_PAUSE', { listingId: l.id }, { ok: 'Publicación pausada: no se ve en el catálogo.' })}>Pausar</Btn>}
           {l.status === 'PAUSED' && <Btn xs kind="dark" onClick={() => A.act('LISTING_RESUME', { listingId: l.id }, { ok: 'Publicación activa otra vez.' })}>Activar</Btn>}
           {(l.status === 'EXPIRED' || l.status === 'REJECTED' || (l.status === 'SOLD_OUT' && !l.reserved)) && <Btn xs kind="dark" icon="repeat" onClick={() => { A.patch(d => { d.flow = { ...d.flow, pub: draftFrom(l) }; }); A.reset('A-10', { mode: 'form' }); }}>Publicar de nuevo</Btn>}
@@ -220,9 +220,11 @@ function EditListing({ id }: { id: string }) {
   const [price, setPrice] = useState(String(l.price).replace('.', ','));
   const [add, setAdd] = useState(0);
   const [min, setMin] = useState(l.minQty || 0);
+  const [photos, setPhotos] = useState<string[]>(l.photoIds);
   const save = async (confirmPrice = false) => {
     const pv = Number(price.replace(',', '.'));
-    const payload = { listingId: id, price: pv, addQty: add || undefined, minQty: min, confirmPrice };
+    const changedPhotos = photos.join('|') !== l.photoIds.join('|');
+    const payload = { listingId: id, price: pv, addQty: add || undefined, minQty: min, confirmPrice, ...(changedPhotos ? { photoIds: photos } : {}) };
     const c = A.check('LISTING_EDIT', payload);
     if (!c.ok && c.error?.code === 'PRICE_CONFIRM' && !confirmPrice) {
       const ok = await A.confirm({ title: '¿Confirmas el precio?', text: c.error.message, ok: 'Sí, confirmo' });
@@ -237,6 +239,7 @@ function EditListing({ id }: { id: string }) {
       <Field label={`Precio por ${l.unit === 'kg' ? 'kilo' : UNIT_LABEL[l.unit].one}`} help={`Sugerido: ${money(suggestedPricePerKg(l.productId) * l.unitKg)}${l.unit === 'kg' ? '' : ` (${money(suggestedPricePerKg(l.productId))} por kg)`}`}><Inp value={price} onInput={setPrice} mode="decimal" prefix="S/" label="Precio" /></Field>
       {!l.fromLotId && <Field label={`Agregar o quitar (${unit})`}><Qty value={add} onChange={setAdd} step={l.unit === 'kg' ? 10 : 1} min={-l.available} unit={unit} /></Field>}
       <Field label={`Mínimo por pedido (${unit})`} help="0 = sin mínimo"><Qty value={min} onChange={setMin} step={l.unit === 'kg' ? 5 : 1} unit={unit} /></Field>
+      <Field label="Fotos de tu cosecha" help="La primera es la portada en el catálogo."><PhotosPick value={photos} onChange={setPhotos} max={3} label="Foto de la cosecha" kind="producto" sample={{ color: product(l.productId).color }} /></Field>
       <Btn full kind="dark" onClick={() => save()}>Guardar cambios</Btn>
       {l.reserved <= 0 && <Btn full kind="secd" onClick={async () => { if (await A.confirm({ title: '¿Dar de baja esta publicación?', text: 'Deja de verse en el catálogo. Puedes publicar de nuevo cuando quieras.', ok: 'Dar de baja', danger: true })) { A.act('LISTING_REMOVE', { listingId: id }, { ok: 'Publicación dada de baja.' }); } }}>Dar de baja</Btn>}
     </SheetBody>
@@ -244,9 +247,13 @@ function EditListing({ id }: { id: string }) {
 }
 
 /* ---------- A-10 · Publicar (voz o íconos) ---------- */
-export interface PubDraft { productId?: string; variety?: string; qty: number; unit: Unit; unitKg: number; pricePerKg?: number; harvestDays: number; quality: Quality; farmId?: string; photoId?: string; minQty?: number; voice?: string; fromLotId?: string; notes?: string[] }
+export interface PubDraft { productId?: string; variety?: string; qty: number; unit: Unit; unitKg: number; pricePerKg?: number; harvestDays: number; quality: Quality; farmId?: string; photoIds?: string[]; /** borradores de antes (una sola foto) */ photoId?: string; minQty?: number; voice?: string; fromLotId?: string; notes?: string[] }
+/** Fotos del borrador (la primera es la portada). */
+const draftPhotos = (d: PubDraft): string[] => d.photoIds ?? (d.photoId ? [d.photoId] : []);
+/** «Cosechado hoy» (RN-22): foto tomada con la app (no de la galería) y cosecha de hoy. */
+const sealOf = (d: PubDraft) => draftPhotos(d).some(id => !id.startsWith('ph-gal-')) && d.harvestDays === 0;
 const emptyDraft = (): PubDraft => ({ qty: 50, unit: 'kg', unitKg: 1, harvestDays: 0, quality: 'PRIMERA' });
-function draftFrom(l: Listing): PubDraft { return { productId: l.productId, variety: l.variety, qty: l.qtyTotal, unit: l.unit, unitKg: l.unitKg, pricePerKg: r2(pricePerKg(l)), harvestDays: 0, quality: l.quality, farmId: l.farmId, minQty: l.minQty }; }
+function draftFrom(l: Listing): PubDraft { return { productId: l.productId, variety: l.variety, qty: l.qtyTotal, unit: l.unit, unitKg: l.unitKg, pricePerKg: r2(pricePerKg(l)), harvestDays: 0, quality: l.quality, farmId: l.farmId, minQty: l.minQty, photoIds: l.photoIds.slice(0, 3) }; }
 function getDraft(A: AppCtx): PubDraft { return { ...emptyDraft(), ...(A.dev.flow.pub ?? {}) }; }
 function setDraft(A: AppCtx, d: Partial<PubDraft>) { A.patch(x => { x.flow = { ...x.flow, pub: { ...emptyDraft(), ...(x.flow.pub ?? {}), ...d } }; }); }
 
@@ -381,10 +388,9 @@ function FormPublish() {
         <div className="lbl">Calidad</div>
         <Seg value={d.quality} onChange={(q) => setDraft(A, { quality: q })} options={[{ v: 'PRIMERA', l: 'Primera' }, { v: 'SEGUNDA', l: 'Segunda' }, { v: 'TERCERA', l: 'Tercera' }]} />
         {farms.length > 0 && <Field label="Chacra de origen"><Sel value={d.farmId ?? farms[0].id} onChange={(v) => setDraft(A, { farmId: v })} options={farms.map(f => ({ v: f.id, l: `${f.name} · ${placeLabel(f.district)} · ${String(f.areaHa).replace('.', ',')} ha` }))} label="Chacra" /></Field>}
-        <div className="row top">
-          <div style={{ width: "42%" }}><PhotoPick value={d.photoId} onChange={(v) => setDraft(A, { photoId: v })} label="Foto de la cosecha" kind="producto" sample={{ color: p.color, stamp: `Tomada en la app · ${hhmm(A.now)} · GPS en la chacra` }} /></div>
-          <div className="cap grow">Toma una foto con la app: si es de hoy y en tu chacra, ganas el sello «Cosechado hoy» (RN-22).</div>
-        </div>
+        <Field label="Fotos de tu cosecha" help="La primera es la portada: es lo que ven los compradores. Si la tomas hoy con la app, ganas el sello «Cosechado hoy» (RN-22).">
+          <PhotosPick value={draftPhotos(d)} onChange={(ids) => setDraft(A, { photoIds: ids, photoId: undefined })} label="Foto de la cosecha" kind="producto" sample={{ color: p.color, stamp: `Tomada en la app · ${hhmm(A.now)} · GPS en la chacra` }} />
+        </Field>
       </>}
       {err && <Note icon="circle-alert" tone="danger">{err}</Note>}
       <Btn full onClick={review} disabled={!!block} why={block}>{A.t('publish.review', 'Revisar')}</Btn>
@@ -406,13 +412,14 @@ function ConfirmPublish() {
   const totalKg = d.qty * (d.unit === 'kg' ? 1 : d.unitKg);
   const farm = d.farmId ? A.w.farms[d.farmId] : undefined;
   const harvestAt = harvestDate(A.now, d.harvestDays);
-  const seal = !!d.photoId && d.harvestDays === 0;
+  const photos = draftPhotos(d);
+  const seal = sealOf(d);
   const left = Math.max(0, A.w.settings.commission.freeSales - org.counters.freeSalesUsed - reservedFreeSlots(A.w, org.id));
   const zones = org.serviceAreas.map(a => districtName(a.district));
   const dev = priceDeviation(price, suggestedPricePerKg(d.productId), A.w.settings.priceDeviation);
   const pl = farm ? plausibility(totalKg, farm.areaHa, p.yieldHigh, A.w.settings.plausibilityFactor) : undefined;
   const block = blockReason(A);
-  const payload = (confirmPrice: boolean) => ({ orgId: org.id, listingId: 'l-' + uid(), productId: d.productId, variety: d.variety, unit: d.unit, unitKg: d.unit === 'kg' ? 1 : d.unitKg, qty: d.qty, price: unitPrice, harvestDate: harvestAt, quality: d.quality, farmId: d.farmId, photoIds: d.photoId ? [d.photoId] : [], harvestSeal: seal, confirmPrice, minQty: d.minQty, fromLotId: d.fromLotId });
+  const payload = (confirmPrice: boolean) => ({ orgId: org.id, listingId: 'l-' + uid(), productId: d.productId, variety: d.variety, unit: d.unit, unitKg: d.unit === 'kg' ? 1 : d.unitKg, qty: d.qty, price: unitPrice, harvestDate: harvestAt, quality: d.quality, farmId: d.farmId, photoIds: photos, harvestSeal: seal, confirmPrice, minQty: d.minQty, fromLotId: d.fromLotId });
   const publish = async () => {
     setBusy(true);
     let confirm = false;
@@ -429,12 +436,13 @@ function ConfirmPublish() {
   };
   const edit = () => A.replace('A-10', { mode: 'form' });
   return (
-    <Screen title="Revisa y publica" sub="Así la verán los compradores" foot={<><Btn full onClick={publish} loading={busy} disabled={!!block} why={block}>{A.t('publish.confirm', 'Publicar')}</Btn><Btn full kind="sec" onClick={() => A.go('A-21')}>Guardar en un almacén aliado</Btn></>}>
+    <Screen title="Revisa y publica" sub="Así la verán los compradores" foot={<><Btn full onClick={publish} loading={busy} disabled={!!block || !photos.length} why={block ?? (!photos.length ? 'Agrega al menos una foto de tu cosecha.' : undefined)}>{A.t('publish.confirm', 'Publicar')}</Btn><Btn full kind="sec" onClick={() => A.go('A-21')}>Guardar en un almacén aliado</Btn></>}>
       <div className="stack">
         {d.voice && <Card tone="soft"><div className="row top g8"><Icon n="audio-lines" /><div className="grow"><div className="cap">Dijiste</div><div className="bodym">«{d.voice}»</div></div><Spk text={`Vas a publicar ${qtyText(d.qty, d.unit, d.unitKg)} de ${p.name} a ${money(price)} el kilo. ¿Confirmas?`} /></div></Card>}
         <Card>
+          {photos.length > 0 && <div style={{ marginBottom: '.8em' }}><Gallery ids={photos} label={p.name} /></div>}
           <div className="row top">
-            <Tile pid={d.productId} size="lg" />
+            {!photos.length && <Tile pid={d.productId} size="lg" />}
             <div className="grow">
               <div className="h3">{p.name}{d.variety ? ` ${d.variety}` : ''} · {qtyText(d.qty, d.unit, d.unitKg)}</div>
               <div className="price" style={{ fontSize: "1.1em" }}>{money(price)} por kg</div>
@@ -443,9 +451,14 @@ function ConfirmPublish() {
             <button className="iconbtn" onClick={edit} aria-label="Editar"><Icon n="pencil" s="1.1em" /></button>
           </div>
           <div className="mt"><Kv rows={[['Chacra', farm ? `${farm.name} · ${placeLabel(farm.district)}` : '—'], ['Cosecha', `${harvestText(harvestAt, A.now)}, ${dayMonth(harvestAt)}`], ['Entrega', zones.length ? zones.slice(0, 3).join(', ') + (zones.length > 3 ? ` y ${zones.length - 3} más` : '') : 'Sin zonas: marca dónde entregas'], ['Calidad', d.quality === 'PRIMERA' ? 'Primera' : d.quality === 'SEGUNDA' ? 'Segunda' : 'Tercera']]} /></div>
-          <div className="chips mt">{seal && <Chip tone="leaf" icon="sparkles">Cosechado hoy</Chip>}<Chip icon="shield-check">Nivel {org.level}</Chip>{d.photoId && <Chip tone="line" icon="camera">Con foto</Chip>}</div>
-          {d.photoId && <div className="mt" style={{ maxWidth: "55%" }}><Photo id={d.photoId} label="Foto de la cosecha" /></div>}
+          <div className="chips mt">{seal && <Chip tone="leaf" icon="sparkles">Cosechado hoy</Chip>}<Chip icon="shield-check">Nivel {org.level}</Chip>{photos.length > 0 && <Chip tone="line" icon="camera">{photos.length === 1 ? 'Con foto' : `${photos.length} fotos`}</Chip>}</div>
         </Card>
+        {photos.length > 0 && photos.length < 3 && <PhotosPick value={photos} onChange={(ids) => setDraft(A, { photoIds: ids, photoId: undefined })} label="Foto de la cosecha" kind="producto" sample={{ color: p.color, stamp: `Tomada en la app · ${hhmm(A.now)} · GPS en la chacra` }} />}
+        {!photos.length && <Card tone="warn"><div className="stack tight">
+          <b className="bodym">Agrega una foto de tu cosecha</b>
+          <div className="cap">Los compradores compran con lo que ven: la foto es lo primero que miran. Tómala ahora o elígela de tu galería.</div>
+          <PhotosPick value={photos} onChange={(ids) => setDraft(A, { photoIds: ids, photoId: undefined })} label="Foto de la cosecha" kind="producto" sample={{ color: p.color, stamp: `Tomada en la app · ${hhmm(A.now)} · GPS en la chacra` }} />
+        </div></Card>}
         {(d.notes ?? []).map((n, i) => <div key={i} className="cap">• {n}</div>)}
         {dev.ask && <Note icon="triangle-alert" tone="warn">Tu precio se aleja {Math.round(Math.abs(dev.dev) * 100)} % del sugerido ({money(suggestedPricePerKg(d.productId))} por kg). Te pediremos confirmarlo (RN-29).</Note>}
         {pl && !pl.ok && <Note icon="triangle-alert" tone="warn">{fkg(totalKg)} pasa lo que rinden {String(farm!.areaHa).replace('.', ',')} ha de {p.name.toLowerCase()}: la publicación queda en revisión antes de verse (RN-23).</Note>}

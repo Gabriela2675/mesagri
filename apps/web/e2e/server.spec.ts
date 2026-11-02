@@ -171,13 +171,13 @@ test('panel web en /panel: ingreso con contraseña y doble factor, y salir cierr
   const w = p.page.locator('.ph-in');
   await expect(screen(w)).toHaveAttribute('data-screen', 'W-01');
   // una clave errada no entra
-  await w.getByLabel('Correo del equipo').fill('carlos@mesagri.pe');
+  await w.getByLabel('Correo del equipo').fill('majo@mesagri.pe');
   await w.locator('input[type=password]').fill('clave-equivocada');
   await w.getByLabel(/Código de tu app/).fill('123456');
   await w.getByRole('button', { name: 'Ingresar', exact: true }).click();
   await expect(w.getByRole('alert')).toContainText(/no son correctos/);
   // con la cuenta de demo (código vigente del doble factor) entra
-  await w.locator('.wdemo').getByRole('button', { name: /Carlos/ }).first().click();
+  await w.locator('.wdemo').getByRole('button', { name: /Majo/ }).first().click();
   await w.getByRole('button', { name: 'Ingresar', exact: true }).click();
   await expect(screen(w)).not.toHaveAttribute('data-screen', 'W-01');
   await w.getByRole('button', { name: 'Cerrar sesión' }).first().click();
@@ -251,7 +251,7 @@ test('en la nube, el escenario de la demo y las cuentas del panel piden la clave
   await expect(screen(w)).toHaveAttribute('data-screen', 'W-01', { timeout: 15_000 });
   await w.getByLabel('Clave del equipo').fill(TEAM_KEY);
   await w.getByRole('button', { name: 'Ver cuentas' }).click();
-  await w.locator('.wdemo').getByRole('button', { name: /Carlos/ }).first().click();
+  await w.locator('.wdemo').getByRole('button', { name: /Majo/ }).first().click();
   await w.getByRole('button', { name: 'Ingresar', exact: true }).click();
   await expect(screen(w)).not.toHaveAttribute('data-screen', 'W-01');
   await ctx.close(); await ctx2.close();

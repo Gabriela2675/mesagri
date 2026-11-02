@@ -12,6 +12,8 @@ import { offlineView } from './store';
 import type { PhotoStore } from './photos';
 import { auth } from './net';
 import { IN_APK } from './routes';
+import { canAskPermissions, permissionStates } from './platform';
+import { PermsSheet, permsFor } from './screens/common';
 import { Icon, Badge, Btn } from './ui/kit';
 import { SCREENS, TABS, homeFor } from './screens/registry';
 import { speak } from './media';
@@ -123,6 +125,17 @@ export function Device(props: DeviceProps) {
     },
     say: (text) => { if ((me?.prefs.audioGuide ?? dev.pre?.audioGuide ?? true)) speak(text); },
   };
+
+  // APK: la primera vez que la persona entra, se piden juntos los permisos que usa su perfil
+  useEffect(() => {
+    if (!IN_APK || store.mode !== 'app' || !me || me.role === 'ADMIN' || !canAskPermissions()) return;
+    const key = 'mesagri.permisos.' + me.id;
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch { return; }
+    const st = permissionStates();
+    if (!permsFor(me.role).some(n => st[n] !== 'granted')) return;
+    const t = setTimeout(() => ctx.sheet(<PermsSheet first />), 700);
+    return () => clearTimeout(t);
+  }, [me?.id]);
 
   // Botón «atrás» del celular (APK y app instalada): cierra la hoja abierta o vuelve una pantalla
   const backRef = useRef<() => boolean>(() => false);

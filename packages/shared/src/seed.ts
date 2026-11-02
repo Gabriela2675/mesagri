@@ -17,6 +17,12 @@ import { codeFrom, digitsFrom } from './ids';
 import { QU_PRODUCT_DRAFTS } from './catalog';
 
 export const SEED_ANCHOR = limaTime(2026, 11, 3, 8, 30);
+/**
+ * Versión de la historia de ejemplo. Si cambia, el servidor en modo demo y la app sin internet la
+ * cargan otra vez (una sola vez): las cuentas de prueba vuelven a su estado inicial. El equipo de
+ * Mesagri que se creó o personalizó en el panel se conserva.
+ */
+export const SEED_VERSION = '2026-11-02 equipo del proyecto';
 const T = (m: number, d: number, hh = 9, mm = 0) => limaTime(2026, m, d, hh, mm);
 
 /* ---------- RUC de ejemplo (con dígito verificador real) ---------- */
@@ -65,8 +71,10 @@ export const PERSONAS: Persona[] = [
   { userId: 'u-ronald', label: 'Ronald · Rápidos Yanahuara', sub: 'Transportista · moto · T2', role: 'CARRIER', group: 'Transportistas aliados' },
   { userId: 'u-ernesto', label: 'Don Ernesto · Molinera La Pampa', sub: 'Almacén aliado · Camaná · A2', role: 'WAREHOUSE', group: 'Almacenes aliados' },
   { userId: 'u-elmer', label: 'Elmer · Centro de acopio Yanque', sub: 'Almacén aliado · Colca · A2', role: 'WAREHOUSE', group: 'Almacenes aliados' },
-  { userId: 'u-carlos', label: 'Carlos Ríos', sub: 'Panel web · administrador general', role: 'ADMIN', group: 'Equipo Mesagri' },
-  { userId: 'u-monica', label: 'Mónica Torres', sub: 'Panel web · administradora general', role: 'ADMIN', group: 'Equipo Mesagri' },
+  { userId: 'u-majo', label: 'Majo', sub: 'Panel web · administración general', role: 'ADMIN', group: 'Equipo Mesagri' },
+  { userId: 'u-gaby', label: 'Gaby', sub: 'Panel web · administración general', role: 'ADMIN', group: 'Equipo Mesagri' },
+  { userId: 'u-dayis', label: 'Dayis', sub: 'Panel web · administración general', role: 'ADMIN', group: 'Equipo Mesagri' },
+  { userId: 'u-kevin', label: 'Kevin', sub: 'Panel web · administración general', role: 'ADMIN', group: 'Equipo Mesagri' },
   { userId: 'u-lucia', label: 'Lucía Paredes', sub: 'Panel web · verificadora', role: 'ADMIN', group: 'Equipo Mesagri' },
   { userId: 'u-diana', label: 'Diana Salas', sub: 'Panel web · soporte', role: 'ADMIN', group: 'Equipo Mesagri' },
   { userId: 'u-ana', label: 'Ana Pinto', sub: 'Panel web · analista (sin datos personales)', role: 'ADMIN', group: 'Equipo Mesagri' },
@@ -114,13 +122,16 @@ function base(w: World) {
 
   /* Equipo de Mesagri (panel web) */
   mkOrg(w, { id: 'org-mesagri', type: 'MESAGRI', name: 'Mesagri S.A.C.', district: '040101', level: 3, initials: 'ME', color: '#1E3F20' });
-  mkUser(w, { id: 'u-carlos', name: 'Carlos Ríos', phone: '900000001', role: 'ADMIN', adminRole: 'GENERAL', orgId: 'org-mesagri', email: 'carlos@mesagri.pe' });
-  mkUser(w, { id: 'u-monica', name: 'Mónica Torres', phone: '900000002', role: 'ADMIN', adminRole: 'GENERAL', orgId: 'org-mesagri', email: 'monica@mesagri.pe' });
+  // administración general: el equipo del proyecto (cada quien personaliza su nombre y hace suya la cuenta en «Mi cuenta»)
+  mkUser(w, { id: 'u-majo', name: 'Majo', phone: '900000001', role: 'ADMIN', adminRole: 'GENERAL', orgId: 'org-mesagri', email: 'majo@mesagri.pe' });
+  mkUser(w, { id: 'u-gaby', name: 'Gaby', phone: '900000002', role: 'ADMIN', adminRole: 'GENERAL', orgId: 'org-mesagri', email: 'gaby@mesagri.pe' });
+  mkUser(w, { id: 'u-dayis', name: 'Dayis', phone: '900000007', role: 'ADMIN', adminRole: 'GENERAL', orgId: 'org-mesagri', email: 'dayis@mesagri.pe' });
+  mkUser(w, { id: 'u-kevin', name: 'Kevin', phone: '900000008', role: 'ADMIN', adminRole: 'GENERAL', orgId: 'org-mesagri', email: 'kevin@mesagri.pe' });
   mkUser(w, { id: 'u-lucia', name: 'Lucía Paredes', phone: '900000003', role: 'ADMIN', adminRole: 'VERIFIER', orgId: 'org-mesagri', email: 'lucia@mesagri.pe' });
   mkUser(w, { id: 'u-marco', name: 'Marco Rivas', phone: '900000004', role: 'ADMIN', adminRole: 'VERIFIER', orgId: 'org-mesagri', email: 'marco@mesagri.pe' });
   mkUser(w, { id: 'u-diana', name: 'Diana Salas', phone: '900000005', role: 'ADMIN', adminRole: 'SUPPORT', orgId: 'org-mesagri', email: 'diana@mesagri.pe' });
   mkUser(w, { id: 'u-ana', name: 'Ana Pinto', phone: '900000006', role: 'ADMIN', adminRole: 'ANALYST', orgId: 'org-mesagri', email: 'ana@mesagri.pe' });
-  w.orgs['org-mesagri'].memberIds = ['u-carlos', 'u-monica', 'u-lucia', 'u-marco', 'u-diana', 'u-ana'];
+  w.orgs['org-mesagri'].memberIds = ['u-majo', 'u-gaby', 'u-dayis', 'u-kevin', 'u-lucia', 'u-marco', 'u-diana', 'u-ana'];
 
   /* Agricultores */
   const hector = mkOrg(w, {
@@ -481,9 +492,9 @@ function script(): MEvent[] {
   ev(T(10, 4, 9), 'u-ernesto', 'STATEMENT_PAY', { statementId: 'st-WAREHOUSE-org-pampa-2026-09', method: 'TRANSFER', operation: opn() });
   ev(T(10, 5, 9), 'u-julio', 'STATEMENT_PAY', { statementId: 'st-CARRIER-org-julio-2026-09', method: 'YAPE', operation: opn() });
   ev(T(10, 7, 9), 'u-teodoro', 'STATEMENT_PAY', { statementId: 'st-FARMER-org-lapunta-2026-09', method: 'TRANSFER', operation: opn() });
-  ev(T(10, 6, 10), 'u-carlos', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: 'st-WAREHOUSE-org-pampa-2026-09', ok: true });
-  ev(T(10, 6, 10, 5), 'u-carlos', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: 'st-CARRIER-org-julio-2026-09', ok: true });
-  ev(T(10, 8, 10), 'u-monica', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: 'st-FARMER-org-lapunta-2026-09', ok: true });
+  ev(T(10, 6, 10), 'u-majo', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: 'st-WAREHOUSE-org-pampa-2026-09', ok: true });
+  ev(T(10, 6, 10, 5), 'u-dayis', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: 'st-CARRIER-org-julio-2026-09', ok: true });
+  ev(T(10, 8, 10), 'u-gaby', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: 'st-FARMER-org-lapunta-2026-09', ok: true });
 
   // La Punta: el lote de arroz cáscara en el molino (vence el 8 de noviembre)
   ev(T(10, 6, 9), 'u-teodoro', 'STO_BOOK', { bookingId: 'bk-lapunta-cascara', facilityOrgId: 'org-pampa', productId: 'arroz_cascara', sacks: 80, kgPerSack: 50, months: 1, arrivalDate: T(10, 8) });

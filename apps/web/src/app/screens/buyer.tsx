@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { reg } from './registry';
 import { useApp, type AppCtx, type CartLine } from '../ctx';
-import { Screen, Btn, Icon, Field, Inp, Sel, Card, Chip, ChipBtn, Seg, Kv, Av, ICirc, Empty, Note, SheetBody, Tile, Prog, Stat, Stars, Photo, PhotoPick, Qty, BarAct, Timeline, QR, Tog } from '../ui/kit';
+import { Screen, Btn, Icon, Field, Inp, Sel, Card, Chip, ChipBtn, Seg, Kv, Av, ICirc, Empty, Note, SheetBody, Tile, Prog, Stat, Stars, Photo, PhotoPick, Qty, BarAct, Timeline, QR, Tog, Gallery } from '../ui/kit';
 import { PRODUCTS, product, UNIT_LABEL, suggestedPricePerKg } from '@mesagri/shared/catalog';
 import { visibleListing, catalogListing, pricePerKg, orgStats, monthPurchases, farmerServes, farmerFee, sellerProvince, routeDays, eligibleCarriers, carrierStats } from '@mesagri/shared/queries';
 import { taxDocsFor, TAXDOC_LABEL, cashCheck, digitalMethods, buyerLimit, freightFor, routeFor, r2, LEVEL_NAME, prepayRequired } from '@mesagri/shared/rules';
@@ -90,7 +90,7 @@ export function ListingCard({ l, compact }: { l: Listing; compact?: boolean }) {
   return (
     <Card>
       <div className="row top" onClick={() => A.go('B-07', { id: l.id })} style={{ cursor: "pointer" }} role="button" tabIndex={0} aria-label={`${p.name}, ${money(pricePerKg(l))} por kilo, de ${seller.name}`} onKeyDown={(e: any) => { if (e.key === 'Enter') A.go('B-07', { id: l.id }); }}>
-        {l.photoIds[0] && !compact ? <div style={{ width: "5.6em", flex: "none" }}><Photo id={l.photoIds[0]} /></div> : <Tile pid={l.productId} size="lg" />}
+        {l.photoIds[0] ? <div style={{ width: compact ? "4.4em" : "5.6em", flex: "none" }}><Photo id={l.photoIds[0]} /></div> : <Tile pid={l.productId} size="lg" />}
         <div className="grow">
           <b className="h3" style={{ fontSize: "1.02em" }}>{p.name}{l.variety ? ` ${l.variety}` : ''}</b>
           <div className="price">{money(pricePerKg(l))} por kg{l.unit !== 'kg' ? <span className="cap" style={{ fontWeight: "700" }}> · {money(l.price)} el {UNIT_LABEL[l.unit].one}</span> : null}</div>
@@ -246,7 +246,7 @@ function ProductDetail() {
       </div>
     ) : undefined}>
       <div className="stack">
-        <div style={{ position: "relative" }}>{l.photoIds[0] ? <Photo id={l.photoIds[0]} /> : <div className="photo" style={{ aspectRatio: "16/9" }}><Tile pid={l.productId} size="lg" /></div>}
+        <div style={{ position: "relative" }}>{l.photoIds.length ? <Gallery ids={l.photoIds} label={p.name} /> : <div className="photo" style={{ aspectRatio: "16/9" }}><Tile pid={l.productId} size="lg" /></div>}
           {l.harvestSeal && startOfDay(l.harvestDate) === startOfDay(A.now) && <span className="chip forest" style={{ position: "absolute", top: ".7em", left: ".7em" }}><Icon n="sparkles" s="1.1em" />Cosechado hoy</span>}</div>
         {!vis && <Note icon="ban" tone="danger">{l.status === 'PAUSED' ? 'El agricultor pausó esta publicación.' : l.available <= 0 ? 'Agotado por ahora.' : 'Esta publicación ya no está disponible.'}</Note>}
         <div className="row between"><div><span className="big">{money(ppk)}</span> <span className="cap">por kg</span>{l.unit !== 'kg' && <div className="cap">{money(l.price)} el {UNIT_LABEL[l.unit].one} de {numTrim(l.unitKg)} kg</div>}</div><Chip tone={seller.level >= 2 ? 'leaf' : ''} icon="shield-check">Nivel {seller.level}</Chip></div>
@@ -287,7 +287,7 @@ function FarmerProfile() {
           <Stat n={st.responseMin ? (st.responseMin >= 60 ? `${Math.floor(st.responseMin / 60)} h` : `${st.responseMin}′`) : '—'} l="responde" />
         </div>
         <div className="sect">Qué vende ahora</div>
-        <Card>{lists.length === 0 ? <Empty icon="package" title="No tiene publicaciones activas" /> : <div className="list">{lists.map(l => <button key={l.id} className="li" onClick={() => A.go('B-07', { id: l.id })}><Tile pid={l.productId} size="sm" /><div className="grow"><b className="bodym">{product(l.productId).name}</b><div className="cap">Quedan {numTrim(l.available)} {l.unit === 'kg' ? 'kg' : UNIT_LABEL[l.unit].many}{l.fromLotId ? ' · en almacén aliado' : ''}</div></div><b className="price">{money(pricePerKg(l))}</b></button>)}</div>}</Card>
+        <Card>{lists.length === 0 ? <Empty icon="package" title="No tiene publicaciones activas" /> : <div className="list">{lists.map(l => <button key={l.id} className="li" onClick={() => A.go('B-07', { id: l.id })}>{l.photoIds[0] ? <div style={{ width: '2.8em', flex: 'none' }}><Photo id={l.photoIds[0]} /></div> : <Tile pid={l.productId} size="sm" />}<div className="grow"><b className="bodym">{product(l.productId).name}</b><div className="cap">Quedan {numTrim(l.available)} {l.unit === 'kg' ? 'kg' : UNIT_LABEL[l.unit].many}{l.fromLotId ? ' · en almacén aliado' : ''}</div></div><b className="price">{money(pricePerKg(l))}</b></button>)}</div>}</Card>
         {revs.slice(0, 4).map(r => <ReviewCard key={r.id} id={r.id} />)}
         <p className="cap center" style={{ margin: "0" }}><Icon n="lock" s="1em" /> Mostramos su distrito, nunca la ubicación de su chacra.</p>
       </div>

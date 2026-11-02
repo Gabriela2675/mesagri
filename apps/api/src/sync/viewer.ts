@@ -10,6 +10,9 @@ import { DomainHttpError } from '../common/errors';
 
 export interface ViewerRequest { token?: string; team?: string }
 
+/** Equipo de Mesagri en el panel: quien es analista ve indicadores sin datos personales. */
+export const adminViewer = (userId: string, adminRole?: string): Viewer => ({ kind: 'admin', userId, ...(adminRole === 'ANALYST' ? { analyst: true } : {}) });
+
 /** El escenario de la demo pide el mundo completo mandando la clave del equipo (vacía si el servidor no tiene clave). */
 export async function viewerOf(auth: AuthService, r: ViewerRequest): Promise<{ viewer: Viewer; tokenError?: DomainHttpError }> {
   if (r.team !== undefined) {
@@ -21,7 +24,7 @@ export async function viewerOf(auth: AuthService, r: ViewerRequest): Promise<{ v
   if (!token) return { viewer: ANON };
   try {
     const u = await auth.verifyAccess(token);
-    return { viewer: u.role === 'ADMIN' ? { kind: 'admin', userId: u.id } : { kind: 'user', userId: u.id, orgId: u.orgId } };
+    return { viewer: u.role === 'ADMIN' ? adminViewer(u.id, u.adminRole) : { kind: 'user', userId: u.id, orgId: u.orgId } };
   } catch (e) {
     return { viewer: ANON, tokenError: e instanceof DomainHttpError ? e : new DomainHttpError(401, 'TOKEN_INVALID', 'Tu sesión venció. Ingresa de nuevo.') };
   }

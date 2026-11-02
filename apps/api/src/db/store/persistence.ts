@@ -27,6 +27,8 @@ export const UNITS: Unit[] = [
 ];
 
 /** Tablas de referencia que no se tocan al reiniciar la demo. */
+/** Se conservan al reiniciar la demo: el equipo de Mesagri (cuentas del panel creadas o hechas propias). */
+export const KEEP_ON_RESET = ['team_accounts'];
 export const REFERENCE_TABLES = ['schema_migrations', 'ubigeo', 'roles', 'units', 'product_categories', 'catalog_products', 'catalog_product_aliases', 'crop_references', 'market_prices'];
 
 type Sigs = Map<string, Map<string, string>>;
@@ -122,7 +124,7 @@ export class Persistence {
     try {
       const tables = (await rows(c, "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'")).map(r => r.t as string);
       await exec(c, 'SET FOREIGN_KEY_CHECKS = 0');
-      for (const t of tables) if (!REFERENCE_TABLES.includes(t)) await exec(c, `TRUNCATE TABLE \`${t}\``);
+      for (const t of tables) if (!REFERENCE_TABLES.includes(t) && !KEEP_ON_RESET.includes(t)) await exec(c, `TRUNCATE TABLE \`${t}\``);
       // productos que el equipo agregó al catálogo (W-09): vuelven al catálogo maestro
       await exec(c, 'DELETE FROM catalog_products WHERE custom_definition IS NOT NULL');
       await exec(c, 'SET FOREIGN_KEY_CHECKS = 1');

@@ -22,8 +22,9 @@ const RUC = rucWithCheck('2061234567');
 const BUYER: Viewer = { kind: 'user', userId: 'u-real-b', orgId: 'org-real-b' };
 const WILBER: Viewer = { kind: 'user', userId: 'u-wilber', orgId: 'org-wilber' };
 const CHARO: Viewer = { kind: 'user', userId: 'u-charo', orgId: 'org-geranios' };
-const ADMIN: Viewer = { kind: 'admin', userId: 'u-carlos' };
-const VIEWERS: [string, Viewer][] = [['anon', ANON], ['comprador real', BUYER], ['Wilber', WILBER], ['Charo', CHARO], ['panel', ADMIN], ['equipo', TEAM]];
+const ADMIN: Viewer = { kind: 'admin', userId: 'u-majo' };
+const ANALYST: Viewer = { kind: 'admin', userId: 'u-ana', analyst: true };
+const VIEWERS: [string, Viewer][] = [['anon', ANON], ['comprador real', BUYER], ['Wilber', WILBER], ['Charo', CHARO], ['panel', ADMIN], ['analista', ANALYST], ['equipo', TEAM]];
 
 /** Un servidor y un celular por perfil: cada celular arranca con su copia y recibe solo cambios. */
 function harness() {
@@ -80,6 +81,12 @@ describe('privacidad por perfil y cambios por entidad', () => {
     expect(h.phone('comprador real').notifs.every(n => n.to === 'org-real-b')).toBe(true);
     expect(h.phone('comprador real').notifs.length).toBeGreaterThan(0);
     expect(h.phone('panel').notifs.length).toBe(h.w.notifs.length);
+    // quien es analista ve indicadores sin datos personales: ni celular ni DNI de las cuentas reales, ni la auditoría
+    expect(h.phone('analista').users['u-real-b'].dni).toBeUndefined();
+    expect(h.phone('analista').users['u-real-b'].phone).not.toBe('912345670');
+    expect(h.phone('analista').audit).toEqual([]);
+    expect(h.phone('analista').notifs.every(n => n.to === 'ADMIN')).toBe(true);
+    expect(h.phone('panel').audit.length).toBeGreaterThan(0);
 
     // el equipo verifica el negocio (nivel 2) y pide a Wilber: desde ese momento Wilber ve sus datos de contacto
     h.poke(w => { w.orgs['org-real-b'].level = 2; });

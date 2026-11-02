@@ -6,7 +6,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import crypto from 'node:crypto';
-import { isPhoneValid, uid, seedSets, maskPhone } from '@mesagri/shared';
+import { isPhoneValid, uid, seedSets, maskPhone, passwordProblem } from '@mesagri/shared';
 import type { User } from '@mesagri/shared';
 import { CONFIG } from '../config';
 import { exec, rows } from '../db/db';
@@ -14,10 +14,11 @@ import { decrypt, encrypt, randomToken, sha256 } from '../db/secure';
 import { EngineService } from '../core/engine.service';
 import { DomainHttpError, ruleError } from '../common/errors';
 import { RateLimiter } from '../common/rate-limit';
-import { hashPassword, otpCode, totp, verifyPassword, verifyTotp } from './secrets';
+import { hashPassword, otpCode, totp, verifyPassword, verifyTotp, base32, otpauthUri } from './secrets';
 import { WhatsAppService, WhatsAppError } from './whatsapp';
 import { SmsService, SmsError } from './sms';
 import { teamOk } from '../common/team';
+import { TeamAccounts } from '../domain/team.accounts';
 
 const ROLE_NAME: Record<string, string> = { FARMER: 'agricultor', BUYER: 'comprador (MYPE)', WAREHOUSE: 'almacén aliado', CARRIER: 'transportista aliado', ADMIN: 'equipo de Mesagri' };
 
@@ -33,7 +34,7 @@ export class AuthService implements OnModuleInit {
   private readonly log = new Logger('Autenticación');
   private readonly limiter = new RateLimiter();
 
-  constructor(private readonly engine: EngineService, private readonly jwt: JwtService, private readonly wa: WhatsAppService, private readonly sms: SmsService) {
+  constructor(private readonly engine: EngineService, private readonly jwt: JwtService, private readonly wa: WhatsAppService, private readonly sms: SmsService, private readonly team: TeamAccounts) {
     engine.seedHooks.push(() => this.ensureTeamCredentials());
     // al reiniciar la demo se empieza de cero también con los límites de intentos
     engine.bus.on('reset', () => this.limiter.clear());
@@ -46,9 +47,11 @@ export class AuthService implements OnModuleInit {
 
   /** Las cuentas del equipo necesitan contraseña y secreto de doble factor (se crean al sembrar). */
   async ensureTeamCredentials() {
-    const list = await rows(this.engine.pool, `
-      SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
-       WHERE r.code = 'ADMIN' AND (u.password_hash IS NULL OR u.totp_secret_enc IS NULL)`);
+    // solo las cuentas de prueba del equipo: a quien agrega la administración general le llega su clave temporal
+    const seed = seedSets().users;
+    const list = (await rows(this.engine.pool, `
+      SELECT u.id, u.uuid FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
+       WHERE r.code = 'ADMIN' AND (u.password_hash IS NULL OR u.totp_secret_enc IS NULL)`)).filter(r => seed.has(r.uuid));
     if (!list.length) return;
     const hash = await hashPassword(CONFIG.adminPassword);
     for (const r of list) {
@@ -345,26 +348,132 @@ export class AuthService implements OnModuleInit {
   async adminLogin(emailRaw: string, password: string, code: string, ip: string, device?: string) {
     this.guard('admin-ip:' + ip, CONFIG.demo ? 300 : 30, 15 * 60_000);
     const email = String(emailRaw ?? '').trim().toLowerCase();
-    const r = (await rows(this.engine.pool, 'SELECT id, uuid, password_hash, totp_secret_enc, failed_logins, locked_until FROM users WHERE email = ?', [email]))[0];
+    const r = (await rows(this.engine.pool, `SELECT id, uuid, password_hash, password_temp, (password_temp_until IS NOT NULL AND password_temp_until < NOW(3)) AS temp_expired,
+      totp_secret_enc, failed_logins, locked_until FROM users WHERE email = ?`, [email]))[0];
     const u = r ? this.engine.world.users[r.uuid] : undefined;
     const bad = () => new DomainHttpError(401, 'BAD_LOGIN', 'El correo, la contraseña o el código de doble factor no son correctos.');
     if (!r || !u || u.role !== 'ADMIN') throw bad();
     if (r.locked_until && r.locked_until.getTime() > Date.now()) throw new DomainHttpError(429, 'LOCKED', 'La cuenta está bloqueada 15 minutos por intentos fallidos.');
+    const temp = !!Number(r.password_temp ?? 0);
     const okPass = await verifyPassword(String(password ?? ''), r.password_hash);
-    const okCode = !!r.totp_secret_enc && verifyTotp(Buffer.from(decrypt(r.totp_secret_enc), 'hex'), String(code ?? ''));
+    // con la clave temporal todavía no hay doble factor: la persona lo activa en este primer ingreso
+    const okCode = temp || (!!r.totp_secret_enc && verifyTotp(Buffer.from(decrypt(r.totp_secret_enc), 'hex'), String(code ?? '')));
     if (!okPass || !okCode) {
       const n = Number(r.failed_logins) + 1;
       await exec(this.engine.pool, 'UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?', [n >= 5 ? 0 : n, n >= 5 ? new Date(Date.now() + 15 * 60_000) : null, r.id]);
       throw bad();
     }
-    if (u.status !== 'ACTIVE') throw new DomainHttpError(403, 'SUSPENDED', 'Tu usuario está suspendido.');
-    await exec(this.engine.pool, 'UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = NOW(3) WHERE id = ?', [r.id]);
+    if (u.status !== 'ACTIVE') throw new DomainHttpError(403, 'SUSPENDED', 'La administración general pausó tu acceso al panel.');
+    await exec(this.engine.pool, 'UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?', [r.id]);
+    if (temp) {
+      if (Number(r.temp_expired)) throw new DomainHttpError(401, 'TEMP_EXPIRED', 'Tu clave temporal venció. Pide a la administración general un acceso nuevo.');
+      // primer ingreso: crea su contraseña y activa el doble factor en su celular (el secreto se ve solo aquí)
+      let hex = r.totp_secret_enc ? decrypt(r.totp_secret_enc) : '';
+      if (!hex) {
+        hex = crypto.randomBytes(20).toString('hex');
+        await exec(this.engine.pool, 'UPDATE users SET totp_secret_enc = ? WHERE id = ?', [encrypt(hex), r.id]);
+      }
+      const secret = Buffer.from(hex, 'hex');
+      const token = await this.jwt.signAsync({ typ: 'admin-setup', sub: u.id, ep: this.engine.epoch, ph: sha256(String(r.password_hash)).slice(0, 16) }, { expiresIn: 20 * 60 });
+      return { userId: u.id, setup: { token, email, name: u.name, adminRole: u.adminRole, totp: { secret: base32(secret), uri: otpauthUri(email, secret) } } };
+    }
+    await exec(this.engine.pool, 'UPDATE users SET last_login_at = NOW(3) WHERE id = ?', [r.id]);
     return { userId: u.id, session: await this.issue(u.id, device) };
+  }
+
+  /** Primer ingreso con la clave temporal: la persona crea su contraseña y confirma el código de su app de autenticación. */
+  async adminSetup(token: string, next: string, code: string, ip: string, device?: string) {
+    this.guard('admin-setup:' + ip, CONFIG.demo ? 300 : 30, 15 * 60_000);
+    const expired = () => new DomainHttpError(401, 'SETUP_EXPIRED', 'Este paso venció o ya se usó. Ingresa otra vez con tu clave temporal.');
+    let t: any;
+    try { t = await this.jwt.verifyAsync(String(token ?? '')); } catch { throw expired(); }
+    if (t?.typ !== 'admin-setup' || t.ep !== this.engine.epoch) throw expired();
+    const row = this.engine.store.ids.opt('users', String(t.sub));
+    const r = row ? (await rows(this.engine.pool, 'SELECT id, password_hash, password_temp, totp_secret_enc FROM users WHERE id = ?', [row]))[0] : undefined;
+    const u = this.engine.world.users[String(t.sub)];
+    if (!r || !u || u.role !== 'ADMIN' || !Number(r.password_temp) || !r.totp_secret_enc || sha256(String(r.password_hash)).slice(0, 16) !== t.ph) throw expired();
+    if (u.status !== 'ACTIVE') throw new DomainHttpError(403, 'SUSPENDED', 'La administración general pausó tu acceso al panel.');
+    const pw = String(next ?? '');
+    const problem = passwordProblem(pw);
+    if (problem) throw new DomainHttpError(422, 'WEAK_PASSWORD', problem);
+    if (await verifyPassword(pw, r.password_hash)) throw new DomainHttpError(422, 'SAME_PASSWORD', 'Crea una contraseña distinta de la temporal.');
+    if (!verifyTotp(Buffer.from(decrypt(r.totp_secret_enc), 'hex'), String(code ?? ''))) {
+      throw new DomainHttpError(422, 'BAD_CODE', 'Ese código no coincide. Escribe el que se ve ahora en tu app de autenticación (y revisa que la hora de tu celular sea la correcta).');
+    }
+    await exec(this.engine.pool, 'UPDATE users SET password_hash = ?, password_temp = 0, password_temp_until = NULL, failed_logins = 0, locked_until = NULL, last_login_at = NOW(3) WHERE id = ?', [await hashPassword(pw), r.id]);
+    await this.team.saveCredentials(u.id);
+    return { userId: u.id, session: await this.issue(u.id, device) };
+  }
+
+  /** La persona del equipo cambia su contraseña (con la actual). Una cuenta de prueba primero se hace propia. */
+  async adminPassword(userId: string, current: string, next: string) {
+    const row = this.engine.store.ids.opt('users', userId);
+    const r = row ? (await rows(this.engine.pool, 'SELECT password_hash FROM users WHERE id = ?', [row]))[0] : undefined;
+    if (await this.team.isDemo(userId)) throw new DomainHttpError(409, 'DEMO_ACCOUNT', 'Esta cuenta todavía es de prueba: primero hazla tuya (contraseña y doble factor).');
+    if (!r || !(await verifyPassword(String(current ?? ''), r.password_hash))) throw new DomainHttpError(401, 'BAD_PASSWORD', 'Tu contraseña actual no es correcta.');
+    const pw = String(next ?? '');
+    const problem = passwordProblem(pw);
+    if (problem) throw new DomainHttpError(422, 'WEAK_PASSWORD', problem);
+    if (pw === current) throw new DomainHttpError(422, 'SAME_PASSWORD', 'La contraseña nueva debe ser distinta de la actual.');
+    await exec(this.engine.pool, 'UPDATE users SET password_hash = ?, password_temp = 0, password_temp_until = NULL WHERE id = ?', [await hashPassword(pw), row]);
+    await this.team.saveCredentials(userId);
+    return { ok: true };
+  }
+
+  /** Cómo entra al panel: con la clave de prueba de la demo o con la suya. */
+  async adminMe(userId: string) {
+    const row = this.engine.store.ids.opt('users', userId);
+    const r = row ? (await rows(this.engine.pool, 'SELECT last_login_at FROM users WHERE id = ?', [row]))[0] : undefined;
+    return { demo: await this.team.isDemo(userId), lastLoginAt: r?.last_login_at ? new Date(r.last_login_at).getTime() : null };
+  }
+
+  /**
+   * Hacer suya la cuenta (o pasar el doble factor a otro celular): el servidor crea un secreto nuevo
+   * y lo muestra una sola vez para escanearlo. Con una cuenta propia se pide la contraseña actual.
+   */
+  async twoFactorStart(userId: string, current: string) {
+    const row = this.engine.store.ids.opt('users', userId);
+    const u = this.engine.world.users[userId];
+    const r = row ? (await rows(this.engine.pool, 'SELECT password_hash FROM users WHERE id = ?', [row]))[0] : undefined;
+    if (!r || !u || u.role !== 'ADMIN') throw new DomainHttpError(404, 'NOT_FOUND', 'No encontramos tu cuenta del equipo.');
+    const demo = await this.team.isDemo(userId);
+    if (!demo && !(await verifyPassword(String(current ?? ''), r.password_hash))) throw new DomainHttpError(401, 'BAD_PASSWORD', 'Tu contraseña actual no es correcta.');
+    const secret = crypto.randomBytes(20);
+    const token = await this.jwt.signAsync({ typ: 'admin-2fa', sub: userId, ep: this.engine.epoch, s: secret.toString('hex'), ph: sha256(String(r.password_hash)).slice(0, 16) }, { expiresIn: 20 * 60 });
+    const label = u.email ?? userId;
+    return { token, needPassword: demo, totp: { secret: base32(secret), uri: otpauthUri(label, secret) } };
+  }
+
+  /** Confirma el código de la app de autenticación; una cuenta de prueba además crea su contraseña. Cierra las otras sesiones. */
+  async twoFactorFinish(userId: string, token: string, code: string, password: string | undefined, family?: string) {
+    let t: any;
+    try { t = await this.jwt.verifyAsync(String(token ?? '')); } catch { throw new DomainHttpError(401, 'SETUP_EXPIRED', 'Pasaron más de 20 minutos. Empieza otra vez.'); }
+    const row = this.engine.store.ids.opt('users', userId);
+    const r = row ? (await rows(this.engine.pool, 'SELECT password_hash FROM users WHERE id = ?', [row]))[0] : undefined;
+    if (t?.typ !== 'admin-2fa' || t.sub !== userId || t.ep !== this.engine.epoch || !r || sha256(String(r.password_hash)).slice(0, 16) !== t.ph) throw new DomainHttpError(401, 'SETUP_EXPIRED', 'Este paso venció o ya se usó. Empieza otra vez.');
+    const demo = await this.team.isDemo(userId);
+    const pw = password === undefined || password === '' ? undefined : String(password);
+    if (demo && pw === undefined) throw new DomainHttpError(422, 'PASSWORD_REQUIRED', 'Crea tu contraseña: la de prueba la conoce todo el equipo de la demo.');
+    if (pw !== undefined) {
+      const problem = passwordProblem(pw);
+      if (problem) throw new DomainHttpError(422, 'WEAK_PASSWORD', problem);
+      if (await verifyPassword(pw, r.password_hash)) throw new DomainHttpError(422, 'SAME_PASSWORD', demo ? 'Crea una contraseña distinta de la de prueba.' : 'La contraseña nueva debe ser distinta de la actual.');
+    }
+    const secret = Buffer.from(String(t.s ?? ''), 'hex');
+    if (secret.length !== 20 || !verifyTotp(secret, String(code ?? ''))) throw new DomainHttpError(422, 'BAD_CODE', 'Ese código no coincide. Escribe el que se ve ahora en tu app de autenticación (y revisa que la hora de tu celular sea la correcta).');
+    await exec(this.engine.pool, 'UPDATE users SET totp_secret_enc = ?, password_hash = COALESCE(?, password_hash), password_temp = 0, password_temp_until = NULL WHERE id = ?', [encrypt(secret.toString('hex')), pw === undefined ? null : await hashPassword(pw), row]);
+    // quien entraba con la clave de prueba (u otro celular) ya no entra: quedan solo las sesiones de este dispositivo
+    await exec(this.engine.pool, 'UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE user_id = ? AND revoked_at IS NULL AND family <> ?', [row, String(family ?? '')]);
+    await this.team.saveCredentials(userId);
+    return { ok: true, own: true };
   }
 
   /** Código vigente del doble factor de una cuenta del equipo (solo para la demo). */
   async teamCodes() {
-    const list = await rows(this.engine.pool, "SELECT u.uuid, u.email, u.totp_secret_enc FROM users u WHERE u.email IS NOT NULL AND u.totp_secret_enc IS NOT NULL ORDER BY u.id");
+    // solo las cuentas de prueba: quien hizo suya su cuenta (o la agregó la administración general) usa su propia app de autenticación
+    const own = await this.team.withCredentials();
+    const list = (await rows(this.engine.pool, "SELECT u.uuid, u.email, u.totp_secret_enc FROM users u WHERE u.email IS NOT NULL AND u.totp_secret_enc IS NOT NULL ORDER BY u.id"))
+      .filter(r => seedSets().users.has(r.uuid) && !own.has(r.uuid) && this.engine.world.users[r.uuid]?.role === 'ADMIN');
     const at = Date.now();
     return list.map(r => {
       const u = this.engine.world.users[r.uuid];
@@ -417,6 +526,8 @@ export class AuthService implements OnModuleInit {
     if (t.ep !== this.engine.epoch) throw new DomainHttpError(401, 'EPOCH', 'La demo se reinició. Ingresa de nuevo.');
     const u = this.engine.world.users[t.sub];
     if (!u) throw new DomainHttpError(401, 'NO_USER', 'Tu usuario ya no existe.');
+    // al equipo que se le pausó el acceso no le sirve la sesión que tenía abierta
+    if (u.role === 'ADMIN' && u.status !== 'ACTIVE') throw new DomainHttpError(401, 'SUSPENDED', 'La administración general pausó tu acceso al panel.');
     return { id: u.id, role: u.role, adminRole: u.adminRole, orgId: u.orgId, name: u.name };
   }
 

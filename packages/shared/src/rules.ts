@@ -185,3 +185,12 @@ export function initials(name: string): string {
   const parts = name.replace(/[«»"().,]/g, ' ').split(/\s+/).filter(w => w && !/^(de|del|la|las|los|y|e\.i\.r\.l|s\.a\.c|sac|eirl)$/i.test(w));
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '·';
 }
+
+/** Contraseña del panel: al menos 10 caracteres, con letras y números. Devuelve qué falta ('' si está bien). */
+export function passwordProblem(pw: string): string {
+  const s = String(pw ?? '');
+  if (s.length < 10) return 'La contraseña debe tener al menos 10 caracteres.';
+  if (s.length > 128) return 'La contraseña es demasiado larga (hasta 128 caracteres).';
+  if (!/[A-Za-zÁÉÍÓÚÑÜáéíóúñü]/.test(s) || !/\d/.test(s)) return 'Usa letras y números en la contraseña.';
+  return '';
+}

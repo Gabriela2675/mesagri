@@ -7,11 +7,11 @@
 import { Logger } from '@nestjs/common';
 import { OnGatewayConnection, OnGatewayInit, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import type { Namespace, Socket } from 'socket.io';
-import { patchFor, relatedOf, viewerKey, emptyChanges, type Viewer } from '@mesagri/shared';
+import { patchFor, relatedOf, viewerKey, viewerKind, emptyChanges, ANON, type Viewer } from '@mesagri/shared';
 import { EngineService, Applied } from '../core/engine.service';
 import { AuthService } from '../auth/auth.service';
 import { encodeWorld } from './sync.controller';
-import { viewerOf } from './viewer';
+import { viewerOf, adminViewer } from './viewer';
 
 /** Nombre del evento del documento según la acción. */
 export function domainEvent(type: string): string | undefined {
@@ -40,6 +40,7 @@ export class SyncGateway implements OnGatewayInit, OnGatewayConnection {
   afterInit() {
     this.engine.bus.on('event', (a: Applied) => {
       try { this.broadcast(a); } catch (e: any) { this.log.error(`No se pudo difundir ${a.event.type}: ${e?.message ?? e}`); }
+      if (a.event.type === 'STAFF_ROLE_SET' || a.event.type === 'STAFF_STATUS_SET') this.refreshViewers(String(a.event.p?.userId ?? ''));
     });
     this.engine.bus.on('reset', (r: { epoch: string }) => this.server.emit('reset', { epoch: r.epoch, boot: this.engine.boot }));
   }
@@ -71,6 +72,20 @@ export class SyncGateway implements OnGatewayInit, OnGatewayConnection {
     }
   }
 
+  /** Cambió el rol de una persona del equipo o se pausó su acceso: sus conexiones pasan a ver lo que su rol permite. */
+  private refreshViewers(userId: string) {
+    const u = this.engine.world.users[userId];
+    for (const s of this.server.sockets.values()) {
+      const peer = s.data as Peer;
+      if (peer.viewer?.kind !== 'admin' || peer.viewer.userId !== userId) continue;
+      const viewer = u && u.status === 'ACTIVE' ? adminViewer(u.id, u.adminRole) : ANON;
+      peer.viewer = viewer;
+      peer.related = relatedOf(this.engine.world, viewer);
+      // con otro perfil, el celular pide su copia otra vez (GET /sync/snapshot)
+      s.emit('hello', { epoch: this.engine.epoch, boot: this.engine.boot, seq: this.engine.seq, serverNow: Date.now(), viewer: viewerKind(viewer) });
+    }
+  }
+
   async handleConnection(client: Socket) {
     try { await this.engine.whenReady; } catch { client.disconnect(true); return; }
     const h = client.handshake;
@@ -79,6 +94,6 @@ export class SyncGateway implements OnGatewayInit, OnGatewayConnection {
     const peer = client.data as Peer;
     peer.viewer = viewer;
     peer.related = relatedOf(this.engine.world, viewer);
-    client.emit('hello', { epoch: this.engine.epoch, boot: this.engine.boot, seq: this.engine.seq, serverNow: Date.now(), viewer: viewer.kind, ...(tokenError ? { authError: tokenError.code } : {}) });
+    client.emit('hello', { epoch: this.engine.epoch, boot: this.engine.boot, seq: this.engine.seq, serverNow: Date.now(), viewer: viewerKind(viewer), ...(tokenError ? { authError: tokenError.code } : {}) });
   }
 }

@@ -4,7 +4,8 @@
  * El servidor tiene el mundo completo. A cada celular le manda una copia con lo que su perfil
  * puede ver:
  * - el equipo de la demo (con la clave del equipo) ve todo, para el escenario de varios celulares;
- * - el equipo de Mesagri (panel web) ve todo menos los códigos secretos;
+ * - el equipo de Mesagri (panel web) ve todo menos los códigos secretos; quien es analista ve
+ *   indicadores sin datos personales (como el público, más los avisos del equipo);
  * - cada persona ve completo lo de su cuenta y lo de sus contrapartes (con quienes tiene pedidos,
  *   envíos, reservas o solicitudes); de las demás cuentas reales solo lo público: nombre,
  *   distrito, publicaciones y calificaciones. Sin celular, DNI, dirección, cuentas de cobro,
@@ -24,13 +25,15 @@ import { maskPhone } from './rules';
 
 export type Viewer =
   | { kind: 'team' }
-  | { kind: 'admin'; userId: string }
+  | { kind: 'admin'; userId: string; analyst?: boolean }
   | { kind: 'user'; userId: string; orgId: string }
   | { kind: 'anon' };
 
 export const TEAM: Viewer = { kind: 'team' };
 export const ANON: Viewer = { kind: 'anon' };
-export const viewerKey = (v: Viewer): string => (v.kind === 'team' || v.kind === 'anon' ? v.kind : `${v.kind}:${v.userId}`);
+/** Perfil de quien mira, como lo informa el servidor (si cambia, el celular pide su copia otra vez). */
+export const viewerKind = (v: Viewer): string => (v.kind === 'admin' && v.analyst ? 'analyst' : v.kind);
+export const viewerKey = (v: Viewer): string => (v.kind === 'team' || v.kind === 'anon' ? v.kind : `${viewerKind(v)}:${v.userId}`);
 
 /** Cuentas de la historia de ejemplo (públicas). */
 export interface SeedSets { users: Set<string>; orgs: Set<string> }
@@ -93,7 +96,8 @@ export function relatedOrgs(w: World, org: string): Set<string> {
 /* ---------------- Ayudas ---------------- */
 
 const isTeam = (x: MaskCtx) => x.v.kind === 'team';
-const isAdmin = (x: MaskCtx) => x.v.kind === 'admin';
+const isAdmin = (x: MaskCtx) => x.v.kind === 'admin' && !x.v.analyst;
+const isAnalyst = (x: MaskCtx) => x.v.kind === 'admin' && !!x.v.analyst;
 const realOrg = (x: MaskCtx, id?: string) => !!id && !x.seed.orgs.has(id);
 const realUser = (x: MaskCtx, id?: string) => !!id && !x.seed.users.has(id);
 const own = (x: MaskCtx, org?: string) => !!org && !!x.org && org === x.org;
@@ -124,7 +128,10 @@ type Masker = (val: any, id: string, x: MaskCtx) => any;
 
 export const MASKS: Record<string, Masker> = {
   users: (u: User, id, x) => {
-    if (isAdmin(x) || !realUser(x, id) || own(x, u.orgId) || id === x.uid) return u;
+    if (isAdmin(x) || id === x.uid) return u;
+    // el equipo de Mesagri: su correo y su celular no son públicos (cada persona los personaliza en «Mi cuenta»)
+    if (u.role === 'ADMIN') return x.v.kind === 'admin' ? u : { ...without(u, 'email', 'dni', 'consents'), phone: maskPhone(u.phone) };
+    if (!realUser(x, id) || own(x, u.orgId)) return u;
     const m = without(u, 'dni', 'email', 'consents');
     if (!near(x, u.orgId)) m.phone = maskPhone(u.phone);
     return m;
@@ -197,9 +204,10 @@ export const MASKS: Record<string, Masker> = {
 /** Avisos: cada cuenta recibe solo los suyos; el equipo, todos. */
 export function notifVisible(n: Notif, x: MaskCtx): boolean {
   if (isTeam(x) || isAdmin(x)) return true;
+  if (isAnalyst(x)) return n.to === 'ADMIN';
   return !!x.org && n.to === x.org;
 }
-/** Bitácora de auditoría: solo el equipo. */
+/** Bitácora de auditoría: solo el equipo (no quien es analista: tiene nombres y detalles de cada caso). */
 export function auditVisible(_a: AuditEntry, x: MaskCtx): boolean { return isTeam(x) || isAdmin(x); }
 
 /** Lo que se le manda de una colección (o de una lista) a quien mira. `undefined` = no se manda. */

@@ -92,7 +92,7 @@ describe('API de Mesagri', () => {
     const panel = await api().post('/api/v1/auth/login').send({ phone: '900000001', code: team.body.demoCode, role: 'ADMIN' });
     expect(panel.status).toBe(409);
     expect(panel.body.code).toBe('USE_PANEL');
-    expect(panel.body.data.email).toBe('carlos@mesagri.pe');
+    expect(panel.body.data.email).toBe('majo@mesagri.pe');
   });
 
   it('registro: código, permiso de 15 minutos y cuenta nueva con sesión', async () => {
@@ -109,7 +109,7 @@ describe('API de Mesagri', () => {
 
   it('panel: contraseña Argon2id, doble factor TOTP y refresco rotativo con detección de reutilización', async () => {
     const team = (await api().get('/api/v1/demo/team')).body;
-    const c = team.find((x: any) => x.userId === 'u-carlos');
+    const c = team.find((x: any) => x.userId === 'u-majo');
     const bad = await api().post('/api/v1/auth/admin/login').send({ email: c.email, password: c.password, code: '000000' });
     expect(bad.status).toBe(401);
     const ok = await api().post('/api/v1/auth/admin/login').send({ email: c.email, password: c.password, code: c.code });
@@ -221,7 +221,7 @@ describe('API de Mesagri', () => {
 
     it('las herramientas de la demo piden la clave del equipo', async () => {
       expect((await api().get('/api/v1/demo/status')).body.teamKeyRequired).toBe(true);
-      for (const [method, url, body] of [['post', '/api/v1/demo/sessions', { userIds: ['u-carlos'] }], ['get', '/api/v1/demo/team', undefined], ['post', '/api/v1/demo/clock', { ms: 1000 }], ['post', '/api/v1/demo/reset', {}]] as const) {
+      for (const [method, url, body] of [['post', '/api/v1/demo/sessions', { userIds: ['u-majo'] }], ['get', '/api/v1/demo/team', undefined], ['post', '/api/v1/demo/clock', { ms: 1000 }], ['post', '/api/v1/demo/reset', {}]] as const) {
         const none = await (api() as any)[method](url).send(body);
         expect(none.status, url).toBe(401);
         expect(none.body.code).toBe('TEAM_KEY');
@@ -278,7 +278,7 @@ describe('API de Mesagri', () => {
       // las personas de ejemplo, en cualquier celular
       expect((await api().post('/api/v1/auth/otp').send({ phone: '987654321', purpose: 'LOGIN' })).body.demoCode).toMatch(/^\d{6}$/);
       // si el equipo restablece el acceso, el próximo celular donde ingrese ve el código
-      const team2 = (await api().get('/api/v1/demo/team').set('x-team-key', KEY)).body.find((x: any) => x.userId === 'u-carlos');
+      const team2 = (await api().get('/api/v1/demo/team').set('x-team-key', KEY)).body.find((x: any) => x.userId === 'u-majo');
       const admin = await api().post('/api/v1/auth/admin/login').send({ email: team2.email, password: team2.password, code: team2.code });
       const reset = await api().post('/api/v1/admin/organizations/org-nube-1/reset-access').set('Authorization', 'Bearer ' + admin.body.session.accessToken).send({ reason: 'Cambió de celular' });
       expect(reset.status).toBe(201);
@@ -481,6 +481,97 @@ describe('API de Mesagri', () => {
     const r = await api().get('/privacidad');
     expect(r.status).toBe(200);
     expect(r.text).toMatch(/Política de privacidad de Mesagri/);
+  });
+
+  it('equipo: la administración general crea la cuenta con su rol; la persona crea su contraseña y su doble factor; todo sobrevive al reinicio', async () => {
+    const { totp: totpOf } = (await import('../dist/auth/secrets.js' as string)) as typeof import('../src/auth/secrets');
+    const b32 = (s: string) => { const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = 0, v = 0; const out: number[] = []; for (const c of s) { v = ((v << 5) | A.indexOf(c)) & 0xffff; bits += 5; if (bits >= 8) { out.push((v >>> (bits - 8)) & 255); bits -= 8; } } return Buffer.from(out); };
+    const bearer = (t: string) => ({ Authorization: 'Bearer ' + t });
+    const gen = await session('u-majo');
+    // solo la administración general agrega personas
+    const denied = await api().post('/api/v1/admin/team').set(bearer(await session('u-ana'))).send({ name: 'Rosa Quispe', email: 'rosa.q@mesagri.pe', phone: '900000031', adminRole: 'SUPPORT' });
+    expect(denied.status).toBe(403);
+    const add = await api().post('/api/v1/admin/team').set(bearer(gen)).send({ name: 'Rosa Quispe', email: 'Rosa.Q@mesagri.pe', phone: '900000031', adminRole: 'SUPPORT' });
+    expect(add.status, JSON.stringify(add.body)).toBe(201);
+    const id = add.body.access.userId as string;
+    const temp = add.body.access.password as string;
+    expect(temp).toMatch(/^[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}$/);
+    // no es una cuenta de prueba: no aparece con la clave del equipo
+    expect((await api().get('/api/v1/demo/team')).body.some((x: any) => x.userId === id)).toBe(false);
+    const list = await api().get('/api/v1/admin/team').set(bearer(gen));
+    expect(list.body.find((x: any) => x.userId === id)).toMatchObject({ pending: true, demo: false, expired: false });
+    expect(list.body.find((x: any) => x.userId === 'u-gaby')).toMatchObject({ demo: true, pending: false });
+
+    // primer ingreso: con la clave temporal (sin código) crea su contraseña y activa su doble factor
+    expect((await api().post('/api/v1/auth/admin/login').send({ email: 'rosa.q@mesagri.pe', password: 'otra-clave-2026', code: '' })).status).toBe(401);
+    const first = await api().post('/api/v1/auth/admin/login').send({ email: 'rosa.q@mesagri.pe', password: temp, code: '' });
+    expect(first.status).toBe(200);
+    expect(first.body.session).toBeUndefined();
+    expect(first.body.setup.totp.uri).toContain('otpauth://totp/Mesagri:rosa.q%40mesagri.pe');
+    const secret = b32(first.body.setup.totp.secret);
+    const setup = (password: string, code: string) => api().post('/api/v1/auth/admin/setup').send({ token: first.body.setup.token, password, code });
+    expect((await setup('corta', totpOf(secret))).body.code).toBe('WEAK_PASSWORD');
+    expect(['SAME_PASSWORD', 'WEAK_PASSWORD']).toContain((await setup(temp, totpOf(secret))).body.code);
+    expect((await setup('chacra-segura-2026', '000000')).body.code).toBe('BAD_CODE');
+    const done = await setup('chacra-segura-2026', totpOf(secret));
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(done.body.session.accessToken).toBeTruthy();
+    // el permiso sirve una vez y la clave temporal ya no entra
+    expect((await setup('chacra-segura-2027', totpOf(secret))).body.code).toBe('SETUP_EXPIRED');
+    expect((await api().post('/api/v1/auth/admin/login').send({ email: 'rosa.q@mesagri.pe', password: temp, code: totpOf(secret) })).status).toBe(401);
+    const login = await api().post('/api/v1/auth/admin/login').send({ email: 'rosa.q@mesagri.pe', password: 'chacra-segura-2026', code: totpOf(secret) });
+    expect(login.status).toBe(200);
+    const rosa = login.body.session.accessToken as string;
+    expect((await api().get('/api/v1/auth/admin/me').set(bearer(rosa))).body.demo).toBe(false);
+    // soporte no ve la auditoría ni administra el equipo
+    expect((await api().get('/api/v1/admin/audit-logs').set(bearer(rosa))).status).toBe(403);
+    expect((await api().get('/api/v1/admin/team').set(bearer(rosa))).status).toBe(403);
+    // pasa a analista: su copia del mundo ya no trae la auditoría ni datos personales
+    expect((await api().post(`/api/v1/admin/team/${id}/role`).set(bearer(gen)).send({ adminRole: 'ANALYST' })).status).toBe(200);
+    const snap = await api().get('/api/v1/sync/snapshot').set(bearer(rosa));
+    expect(snap.body.viewer).toBe('analyst');
+    expect(snap.body.world.audit).toEqual([]);
+    // al pausarla, su sesión deja de servir; al reactivarla, vuelve
+    expect((await api().post(`/api/v1/admin/team/${id}/status`).set(bearer(gen)).send({ active: false })).status).toBe(200);
+    const blocked = await api().get('/api/v1/auth/admin/me').set(bearer(rosa));
+    expect(blocked.status).toBe(401);
+    expect(blocked.body.code).toBe('SUSPENDED');
+    expect((await api().post(`/api/v1/admin/team/${id}/status`).set(bearer(gen)).send({ active: true })).status).toBe(200);
+    // la administración general no puede pausarse a sí misma
+    expect((await api().post('/api/v1/admin/team/u-majo/status').set(bearer(gen)).send({ active: false })).body.code).toBe('SELF');
+
+    // Gaby hace suya su cuenta de prueba y personaliza su nombre
+    const demo = (await api().get('/api/v1/demo/team')).body.find((x: any) => x.userId === 'u-gaby');
+    const gl = await api().post('/api/v1/auth/admin/login').send({ email: demo.email, password: demo.password, code: demo.code });
+    const gaby = gl.body.session.accessToken as string;
+    expect((await api().get('/api/v1/auth/admin/me').set(bearer(gaby))).body.demo).toBe(true);
+    expect((await api().post('/api/v1/auth/admin/password').set(bearer(gaby)).send({ current: demo.password, next: 'gaby-mesagri-2026' })).body.code).toBe('DEMO_ACCOUNT');
+    const st = await api().post('/api/v1/auth/admin/2fa/start').set(bearer(gaby)).send({});
+    expect(st.body.needPassword).toBe(true);
+    const gsecret = b32(st.body.totp.secret);
+    expect((await api().post('/api/v1/auth/admin/2fa/finish').set(bearer(gaby)).send({ token: st.body.token, code: totpOf(gsecret) })).body.code).toBe('PASSWORD_REQUIRED');
+    const fin = await api().post('/api/v1/auth/admin/2fa/finish').set(bearer(gaby)).send({ token: st.body.token, code: totpOf(gsecret), password: 'gaby-mesagri-2026' });
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+    expect((await api().get('/api/v1/demo/team')).body.some((x: any) => x.userId === 'u-gaby')).toBe(false);
+    expect((await api().post('/api/v1/auth/admin/login').send({ email: 'gaby@mesagri.pe', password: demo.password, code: demo.code })).status).toBe(401);
+    const name = await api().post('/api/v1/sync/events').set(bearer(gaby)).send({ events: [{ id: 'e-api-perfil-1', type: 'PROFILE_SET', p: { name: 'Gabriela Moreno', shortName: 'Gaby' } }] });
+    expect(name.body.results[0].ok, JSON.stringify(name.body)).toBe(true);
+    // nadie del público ve el correo ni el celular del equipo
+    const pub = await api().get('/api/v1/sync/snapshot');
+    expect(pub.body.world.users['u-gaby'].email).toBeUndefined();
+    expect(pub.body.world.users['u-gaby'].phone).not.toBe('900000002');
+
+    // reiniciar la demo no cambia quién trabaja en Mesagri: roles, datos y claves se conservan
+    await new Promise(r => setTimeout(r, 300));
+    expect((await api().post('/api/v1/demo/reset').send({})).status).toBe(200);
+    const again = await api().post('/api/v1/auth/admin/login').send({ email: 'rosa.q@mesagri.pe', password: 'chacra-segura-2026', code: totpOf(secret) });
+    expect(again.status).toBe(200);
+    const w2 = (await api().get('/api/v1/sync/snapshot').set(bearer(await session('u-majo')))).body.world;
+    expect(w2.users[id]).toMatchObject({ name: 'Rosa Quispe', adminRole: 'ANALYST', status: 'ACTIVE', email: 'rosa.q@mesagri.pe' });
+    expect(w2.users['u-gaby'].name).toBe('Gabriela Moreno');
+    expect((await api().post('/api/v1/auth/admin/login').send({ email: 'gaby@mesagri.pe', password: 'gaby-mesagri-2026', code: totpOf(gsecret) })).status).toBe(200);
+    expect((await api().get('/api/v1/demo/team')).body.map((x: any) => x.userId)).toEqual(expect.arrayContaining(['u-majo', 'u-dayis', 'u-kevin']));
+    expect((await api().get('/api/v1/demo/team')).body.some((x: any) => x.userId === 'u-gaby' || x.userId === id)).toBe(false);
   });
 
   it('reiniciar la demo cambia la época y deja sin efecto los tokens anteriores', async () => {

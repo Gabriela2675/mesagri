@@ -14,14 +14,17 @@ import { applySafe, structuredCloneSafe, emptyWorld } from '@mesagri/shared/engi
 import { HANDLERS } from '@mesagri/shared/engine/core';
 import { hasDue } from '@mesagri/shared/engine/tick';
 import { uid } from '@mesagri/shared/ids';
-import { isPhoneValid } from '@mesagri/shared/rules';
-import { SEED_ANCHOR } from '@mesagri/shared/seed';
+import { isPhoneValid, passwordProblem } from '@mesagri/shared/rules';
+import { SEED_ANCHOR, SEED_VERSION } from '@mesagri/shared/seed';
 import { PROTOCOL } from '@mesagri/shared/protocol';
 import { ApiError } from '../net';
 import { kvGet, kvSet, kvDel } from './kv';
+import { base32, fromHex, otpauthUri, passwordHash, randomBytes, toHex, verifyTotp } from './totp';
 
 interface Applied { seq: number; event: MEvent; result?: unknown }
-interface Saved { v: 1; protocol: number; epoch: string; seq: number; world: World; simNow: number; revoked: Record<string, number> }
+/** Claves del equipo en este celular: temporal (la dio la administración general) o propia, con su doble factor. */
+interface LocalCred { salt: string; hash: string; temp: boolean; until?: number; totp?: string }
+interface Saved { v: 1; protocol: number; seedVersion?: string; epoch: string; seq: number; world: World; simNow: number; revoked: Record<string, number>; pw?: Record<string, LocalCred> }
 type Listener = (type: 'event' | 'reset', data: unknown) => void;
 
 const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK']);
@@ -31,6 +34,17 @@ const TICKET_TTL = 15 * 60_000;
 const ACCESS_TTL = 12 * 3600_000;
 const ADMIN_PASSWORD = 'demo-mesagri';
 const STATE_KEY = 'estado';
+const TEMP_HOURS = 72;
+const BAD_ADMIN = 'El correo, la contraseña o el código de doble factor no son correctos.';
+const PAUSED = 'La administración general pausó tu acceso al panel.';
+const BAD_TOTP = 'Ese código no coincide. Escribe el que se ve ahora en tu app de autenticación (y revisa que la hora de tu celular sea la correcta).';
+
+/** Clave temporal fácil de dictar: tres grupos sin letras que se confunden. */
+function tempPassword(): string {
+  const A = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const g = () => Array.from({ length: 4 }, () => A[randInt(A.length)]).join('');
+  return `${g()}-${g()}-${g()}`;
+}
 
 const ALNUM = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 function randInt(max: number): number {
@@ -62,6 +76,8 @@ export class LocalServer {
   private otps = new Map<string, { code: string; exp: number; attempts: number }>();
   private tickets = new Map<string, { phone: string; exp: number }>();
   private revoked: Record<string, number> = {};
+  private pw: Record<string, LocalCred> = {};
+  private setups = new Map<string, { userId: string; exp: number; kind: 'setup' | '2fa'; secret: string; ph: string }>();
   private listeners = new Set<Listener>();
   private saveTimer?: ReturnType<typeof setTimeout>;
   /** Otras pestañas o ventanas de la app en este mismo celular (comparten lo guardado). */
@@ -74,11 +90,12 @@ export class LocalServer {
 
   private async init() {
     const saved = await kvGet<Saved>(STATE_KEY);
-    if (saved && saved.v === 1 && saved.protocol === PROTOCOL && saved.world && saved.epoch) {
+    if (saved && saved.v === 1 && saved.protocol === PROTOCOL && saved.seedVersion === SEED_VERSION && saved.world && saved.epoch) {
       this.world = saved.world;
       this.seq = saved.seq;
       this.epoch = saved.epoch;
       this.revoked = saved.revoked ?? {};
+      this.pw = saved.pw ?? {};
       // el reloj de la demo sigue donde quedó al cerrar la app (no corre con la app cerrada)
       if (saved.simNow) this.world.clockOffset = saved.simNow - Date.now();
     } else {
@@ -105,6 +122,8 @@ export class LocalServer {
     this.seq = 0;
     this.epoch = 'ep' + uid();
     this.revoked = {};
+    this.pw = {};
+    this.setups.clear();
     this.log = [];
     this.byId.clear();
     this.otps.clear();
@@ -127,7 +146,7 @@ export class LocalServer {
   private async saveNow() {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined; }
     if (!this.world) return;
-    const s: Saved = { v: 1, protocol: PROTOCOL, epoch: this.epoch, seq: this.seq, world: this.world, simNow: this.simNow(), revoked: this.revoked };
+    const s: Saved = { v: 1, protocol: PROTOCOL, seedVersion: SEED_VERSION, epoch: this.epoch, seq: this.seq, world: this.world, simNow: this.simNow(), revoked: this.revoked, pw: this.pw };
     await kvSet(STATE_KEY, s);
     try { this.channel?.postMessage({ type: 'saved', tab: this.tab, seq: this.seq, epoch: this.epoch }); } catch { /* sin canal */ }
   }
@@ -135,11 +154,12 @@ export class LocalServer {
   /** Otra pestaña guardó cambios: se leen y la app se pone al día. */
   private async reloadFromDisk() {
     const saved = await kvGet<Saved>(STATE_KEY);
-    if (!saved || saved.v !== 1 || saved.protocol !== PROTOCOL || !saved.world) return;
+    if (!saved || saved.v !== 1 || saved.protocol !== PROTOCOL || saved.seedVersion !== SEED_VERSION || !saved.world) return;
     this.world = saved.world;
     this.seq = saved.seq;
     this.epoch = saved.epoch;
     this.revoked = saved.revoked ?? {};
+    this.pw = saved.pw ?? {};
     if (saved.simNow) this.world.clockOffset = saved.simNow - Date.now();
     this.log = [];
     this.byId.clear();
@@ -204,6 +224,31 @@ export class LocalServer {
     const at = Date.now();
     const accessToken = `L1|${encodeURIComponent(userId)}|${this.epoch}|${at}`;
     return { userId, accessToken, refreshToken: 'R' + accessToken, expiresAt: at + ACCESS_TTL };
+  }
+
+  /** Contraseña con sal (y el doble factor, si ya lo activó). */
+  private cred(password: string, totp?: string): LocalCred {
+    const salt = toHex(randomBytes(16));
+    return { salt, hash: passwordHash(password, salt), temp: false, ...(totp ? { totp } : {}) };
+  }
+
+  /** Clave temporal de 3 días para una persona del equipo (en su primer ingreso crea la suya). */
+  private temp(userId: string) {
+    const password = tempPassword();
+    const until = Date.now() + TEMP_HOURS * 3600_000;
+    this.pw[userId] = { ...this.cred(password), temp: true, until };
+    this.scheduleSave();
+    const u = this.world.users[userId];
+    return { userId, name: u?.name, email: u?.email, password, expiresAt: until };
+  }
+
+  /** Persona del equipo que hace el pedido (con su sesión). */
+  private adminOf(token?: string): string {
+    const id = this.userOf(token);
+    const u = this.world.users[id];
+    if (u?.role !== 'ADMIN') fail(403, 'FORBIDDEN', 'Solo para el equipo de Mesagri.');
+    if (u!.status !== 'ACTIVE') fail(401, 'SUSPENDED', PAUSED);
+    return id;
   }
 
   private userOf(token?: string): string {
@@ -320,12 +365,87 @@ export class LocalServer {
     if (method === 'POST' && route === '/auth/admin/login') {
       const email = String(b.email ?? '').trim().toLowerCase();
       const u = Object.values(w.users).find(x => x.role === 'ADMIN' && (x.email ?? '').toLowerCase() === email);
+      const own = u ? this.pw[u.id] : undefined;
+      const password = String(b.password ?? '');
+      const okPass = !!u && (own ? passwordHash(password, own.salt) === own.hash : password === ADMIN_PASSWORD);
+      if (own?.temp) {
+        // primer ingreso con la clave temporal: crea su contraseña y activa su doble factor
+        if (!u || !okPass) fail(401, 'BAD_LOGIN', BAD_ADMIN);
+        if (u!.status !== 'ACTIVE') fail(403, 'SUSPENDED', PAUSED);
+        if (own.until && own.until < Date.now()) fail(401, 'TEMP_EXPIRED', 'Tu clave temporal venció. Pide a la administración general un acceso nuevo.');
+        if (!own.totp) { own.totp = toHex(randomBytes(20)); this.scheduleSave(); }
+        const token = 'S' + uid() + uid();
+        this.setups.set(token, { userId: u!.id, exp: Date.now() + 20 * 60_000, kind: 'setup', secret: own.totp, ph: own.hash });
+        const sec = fromHex(own.totp);
+        return { userId: u!.id, setup: { token, email: u!.email, name: u!.name, adminRole: u!.adminRole, totp: { secret: base32(sec), uri: otpauthUri(u!.email ?? u!.id, sec) } } };
+      }
       const step = Math.floor(Date.now() / 30_000);
       const code = String(b.code ?? '').trim();
-      const okCode = !!u && [step, step - 1].some(s => teamCode(u.id, this.epoch, s) === code);
-      if (!u || String(b.password ?? '') !== ADMIN_PASSWORD || !okCode) fail(401, 'BAD_LOGIN', 'El correo, la contraseña o el código de doble factor no son correctos.');
-      if (u!.status !== 'ACTIVE') fail(403, 'SUSPENDED', 'Tu usuario está suspendido.');
+      const okCode = !!u && (own?.totp ? verifyTotp(fromHex(own.totp), code) : [step, step - 1].some(s => teamCode(u.id, this.epoch, s) === code));
+      if (!u || !okPass || !okCode) fail(401, 'BAD_LOGIN', BAD_ADMIN);
+      if (u!.status !== 'ACTIVE') fail(403, 'SUSPENDED', PAUSED);
       return { userId: u!.id, session: this.issue(u!.id) };
+    }
+    if (method === 'POST' && route === '/auth/admin/setup') {
+      const st = this.setups.get(String(b.token ?? ''));
+      const own = st ? this.pw[st.userId] : undefined;
+      if (!st || st.kind !== 'setup' || st.exp < Date.now() || !own?.temp || own.hash !== st.ph) fail(401, 'SETUP_EXPIRED', 'Este paso venció o ya se usó. Ingresa otra vez con tu clave temporal.');
+      const u = w.users[st!.userId];
+      if (!u || u.status !== 'ACTIVE') fail(403, 'SUSPENDED', PAUSED);
+      const pw = String(b.password ?? '');
+      const problem = passwordProblem(pw);
+      if (problem) fail(422, 'WEAK_PASSWORD', problem);
+      if (passwordHash(pw, own!.salt) === own!.hash) fail(422, 'SAME_PASSWORD', 'Crea una contraseña distinta de la temporal.');
+      if (!verifyTotp(fromHex(st!.secret), String(b.code ?? ''))) fail(422, 'BAD_CODE', BAD_TOTP);
+      this.pw[u.id] = this.cred(pw, st!.secret);
+      this.setups.delete(String(b.token));
+      this.scheduleSave();
+      return { userId: u.id, session: this.issue(u.id) };
+    }
+    if (method === 'GET' && route === '/auth/admin/me') {
+      const id = this.adminOf(token);
+      return { demo: !this.pw[id], lastLoginAt: null };
+    }
+    if (method === 'POST' && route === '/auth/admin/2fa/start') {
+      const id = this.adminOf(token);
+      const own = this.pw[id];
+      if (own && passwordHash(String(b.current ?? ''), own.salt) !== own.hash) fail(401, 'BAD_PASSWORD', 'Tu contraseña actual no es correcta.');
+      const secret = toHex(randomBytes(20));
+      const t = 'F' + uid() + uid();
+      this.setups.set(t, { userId: id, exp: Date.now() + 20 * 60_000, kind: '2fa', secret, ph: own?.hash ?? '' });
+      const sec = fromHex(secret);
+      return { token: t, needPassword: !own, totp: { secret: base32(sec), uri: otpauthUri(w.users[id].email ?? id, sec) } };
+    }
+    if (method === 'POST' && route === '/auth/admin/2fa/finish') {
+      const id = this.adminOf(token);
+      const st = this.setups.get(String(b.token ?? ''));
+      const own = this.pw[id];
+      if (!st || st.kind !== '2fa' || st.userId !== id || st.exp < Date.now() || (own?.hash ?? '') !== st.ph) fail(401, 'SETUP_EXPIRED', 'Este paso venció o ya se usó. Empieza otra vez.');
+      const pw = b.password ? String(b.password) : undefined;
+      if (!own && !pw) fail(422, 'PASSWORD_REQUIRED', 'Crea tu contraseña: la de prueba la conoce todo el equipo de la demo.');
+      if (pw !== undefined) {
+        const problem = passwordProblem(pw);
+        if (problem) fail(422, 'WEAK_PASSWORD', problem);
+        if (own ? passwordHash(pw, own.salt) === own.hash : pw === ADMIN_PASSWORD) fail(422, 'SAME_PASSWORD', own ? 'La contraseña nueva debe ser distinta de la actual.' : 'Crea una contraseña distinta de la de prueba.');
+      }
+      if (!verifyTotp(fromHex(st!.secret), String(b.code ?? ''))) fail(422, 'BAD_CODE', BAD_TOTP);
+      this.pw[id] = pw !== undefined ? this.cred(pw, st!.secret) : { ...own!, temp: false, until: undefined, totp: st!.secret };
+      this.setups.delete(String(b.token));
+      this.scheduleSave();
+      return { ok: true, own: true };
+    }
+    if (method === 'POST' && route === '/auth/admin/password') {
+      const id = this.adminOf(token);
+      const own = this.pw[id];
+      if (!own) fail(409, 'DEMO_ACCOUNT', 'Esta cuenta todavía es de prueba: primero hazla tuya (contraseña y doble factor).');
+      if (passwordHash(String(b.current ?? ''), own!.salt) !== own!.hash) fail(401, 'BAD_PASSWORD', 'Tu contraseña actual no es correcta.');
+      const pw = String(b.next ?? '');
+      const problem = passwordProblem(pw);
+      if (problem) fail(422, 'WEAK_PASSWORD', problem);
+      if (pw === String(b.current ?? '')) fail(422, 'SAME_PASSWORD', 'La contraseña nueva debe ser distinta de la actual.');
+      this.pw[id] = this.cred(pw, own!.totp);
+      this.scheduleSave();
+      return { ok: true };
     }
     if (method === 'POST' && route === '/auth/refresh') {
       const userId = this.userOf(b.refreshToken);
@@ -339,7 +459,7 @@ export class LocalServer {
     if (method === 'GET' && route === '/demo/team') {
       const at = Date.now();
       const step = Math.floor(at / 30_000);
-      return Object.values(w.users).filter(u => u.role === 'ADMIN' && u.email).map(u => ({ userId: u.id, name: u.name, email: u.email, adminRole: u.adminRole, password: ADMIN_PASSWORD, code: teamCode(u.id, this.epoch, step), validFor: 30 - Math.floor(at / 1000) % 30 }));
+      return Object.values(w.users).filter(u => u.role === 'ADMIN' && u.email && !this.pw[u.id]).map(u => ({ userId: u.id, name: u.name, email: u.email, adminRole: u.adminRole, password: ADMIN_PASSWORD, code: teamCode(u.id, this.epoch, step), validFor: 30 - Math.floor(at / 1000) % 30 }));
     }
     if (method === 'POST' && route === '/demo/clock') {
       const ms = Math.round(Number(b.ms));
@@ -368,6 +488,36 @@ export class LocalServer {
       for (const m of members) this.revoked[m] = Date.now();
       this.scheduleSave();
       return { ok: true, sessionsClosed: members.length };
+    }
+
+    if (route === '/admin/team' || route.startsWith('/admin/team/')) {
+      const actor = this.userOf(token);
+      const a = w.users[actor];
+      if (a?.role !== 'ADMIN' || a.adminRole !== 'GENERAL') fail(403, 'FORBIDDEN', 'Solo la administración general administra el equipo.');
+      if (method === 'GET' && route === '/admin/team') {
+        return Object.values(w.users).filter(u => u.role === 'ADMIN').map(u => {
+          const c = this.pw[u.id];
+          return { userId: u.id, demo: !c, pending: !!c?.temp, expired: !!c?.temp && (c.until ?? Infinity) < Date.now(), lastLoginAt: null };
+        });
+      }
+      if (method === 'POST' && route === '/admin/team') {
+        const userId = 'u-' + uid();
+        const r = this.apply({ type: 'STAFF_ADD', actor, p: { userId, name: b.name, email: b.email, phone: b.phone, adminRole: b.adminRole } });
+        if (!r.ok) fail(422, r.error!.code, r.error!.message);
+        return { ok: true, seq: r.seq, result: r.result ?? null, access: this.temp(userId) };
+      }
+      const m = route.match(/^\/admin\/team\/([^/]+)\/(role|status|access)$/);
+      if (method === 'POST' && m) {
+        const id = decodeURIComponent(m[1]);
+        const type = m[2] === 'role' ? 'STAFF_ROLE_SET' : m[2] === 'status' ? 'STAFF_STATUS_SET' : 'STAFF_ACCESS_RESET';
+        const p = m[2] === 'role' ? { userId: id, adminRole: b.adminRole } : m[2] === 'status' ? { userId: id, active: b.active === true } : { userId: id };
+        const r = this.apply({ type, actor, p });
+        if (!r.ok) fail(r.error!.code === 'NOT_FOUND' ? 404 : 422, r.error!.code, r.error!.message);
+        if (m[2] === 'access') { this.revoked[id] = Date.now(); return { ok: true, seq: r.seq, access: this.temp(id) }; }
+        if (m[2] === 'status' && b.active !== true) this.revoked[id] = Date.now();
+        this.scheduleSave();
+        return { ok: true, seq: r.seq };
+      }
     }
 
     // las fotos y documentos viven en el celular (no hay servidor de archivos)

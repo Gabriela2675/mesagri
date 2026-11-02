@@ -22,7 +22,8 @@ import { StatementView } from './farmer2';
 import { RenewDoc } from './storage';
 import { callPhone, openMap } from '../platform';
 import { readQrFromFile } from '../media';
-import { PrefsSheet, PrivacySheet } from './common';
+import { PrefsSheet, PrivacySheet, NameSheet, PermsSheet } from './common';
+import { canAskPermissions } from '../platform';
 import type { Org, Shipment, World, DocItem, Evidence, PayMethod } from '@mesagri/shared/types';
 
 const net = (sh: Shipment) => r2(sh.freight * (1 - sh.commissionRate));
@@ -1022,6 +1023,8 @@ function CarrierProfileMe() {
         <Card><div className="list">
           {item('message-circle', 'Mensajes', 'Conversaciones por envío', () => A.go('A-18'))}
           {item('bell', 'Avisos', 'Ofertas, cobros y vencimientos', () => A.go('A-29'))}
+          {item('user', 'Tu nombre', `Te llamamos ${me.shortName}`, () => A.sheet(<NameSheet />))}
+          {canAskPermissions() && item('smartphone', 'Permisos de la app', 'Cámara para las fotos y el QR', () => A.sheet(<PermsSheet />))}
           {item('globe', 'Idioma y letra', `Castellano · letra ${me.prefs.textScale > 1.1 ? 'grande' : 'normal'}`, () => A.sheet(<PrefsSheet />))}
           {item('lock', 'Privacidad y mis datos', 'Descargar o borrar mis datos', () => A.sheet(<PrivacySheet />))}
           {item('circle-question-mark', 'Ayuda', 'Preguntas, WhatsApp y libro de reclamaciones', () => A.go('A-19'))}

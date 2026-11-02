@@ -12,7 +12,10 @@ import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.provider.Settings;
+import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
@@ -49,8 +52,9 @@ import java.util.Map;
  * - Sin internet: «probar sin internet» abre la versión autónoma que viene en el APK (assets/www), con
  *   datos de ejemplo guardados en el celular, desde una dirección https propia del celular
  *   (https://appassets.androidplatform.net).
- * En los dos casos usa el GPS, la cámara, la voz y los archivos como una app normal; lo que no es de
- * la app (llamadas, mapas, WhatsApp) se abre afuera.
+ * En los dos casos usa el GPS, la cámara, el micrófono y los archivos como una app normal: pide cada
+ * permiso cuando hace falta (y todos juntos desde «Permisos de la app»). Lo que no es de la app
+ * (llamadas, mapas, WhatsApp) se abre afuera.
  */
 public class MainActivity extends Activity {
     private static final String HOST = "appassets.androidplatform.net";
@@ -60,10 +64,20 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE = 11;
     private static final int REQ_LOCATION = 12;
     private static final int REQ_VOICE = 13;
+    private static final int REQ_CAMERA = 14;
+    private static final int REQ_MIC = 15;
+    private static final int REQ_ASK = 16;
+    private static final int REQ_WEB = 17;
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
+    /** Selector de fotos que espera la respuesta al permiso de la cámara. */
+    private Intent pendingPick;
+    private boolean pendingCapture;
+    /** Pedido de cámara o micrófono en vivo de la página (getUserMedia) que espera el permiso. */
+    private PermissionRequest pendingWeb;
+    private SpeechRecognizer recognizer;
     private GeolocationPermissions.Callback geoCallback;
     private String geoOrigin;
     private TextToSpeech tts;
@@ -337,29 +351,16 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 pick = new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
             }
-            Intent camera = null;
-            cameraUri = null;
-            if (images) {
-                cameraUri = FilesProvider.newPhoto(MainActivity.this);
-                camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                camera.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
-                camera.setClipData(ClipData.newRawUri("foto", cameraUri));
-                camera.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            }
-            Intent launch;
-            if (camera != null && params.isCaptureEnabled()) {
-                launch = camera;
-            } else {
-                launch = Intent.createChooser(pick, "Elige una foto");
-                if (camera != null) launch.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{camera});
-            }
-            try {
-                startActivityForResult(launch, REQ_FILE);
+            boolean capture = params.isCaptureEnabled();
+            if (images && capture && !granted(Manifest.permission.CAMERA)) {
+                // «Tomar foto»: primero el permiso de la cámara; con la respuesta se abre la cámara o la galería
+                pendingPick = pick;
+                pendingCapture = true;
+                ask(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
                 return true;
-            } catch (Exception e) {
-                fileCallback = null;
-                return false;
             }
+            // «Elegir de la galería»: la cámara aparece como opción solo si ya hay permiso
+            return launchChooser(pick, capture, images && granted(Manifest.permission.CAMERA));
         }
 
         @Override
@@ -374,10 +375,101 @@ public class MainActivity extends Activity {
         }
 
         @Override
-        public void onPermissionRequest(PermissionRequest request) {
-            // la app no usa micrófono ni cámara en vivo: las fotos se toman con la app de cámara
-            request.deny();
+        public void onPermissionRequest(final PermissionRequest request) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() { webPermission(request); }
+            });
         }
+    }
+
+    /** Abre la cámara (si hay permiso) o el selector de fotos de la galería. */
+    private boolean launchChooser(Intent pick, boolean capture, boolean withCamera) {
+        Intent camera = null;
+        cameraUri = null;
+        if (withCamera) {
+            cameraUri = FilesProvider.newPhoto(MainActivity.this);
+            camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            camera.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
+            camera.setClipData(ClipData.newRawUri("foto", cameraUri));
+            camera.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }
+        Intent launch;
+        if (camera != null && capture) {
+            launch = camera;
+        } else {
+            launch = Intent.createChooser(pick, "Elige una foto");
+            if (camera != null) launch.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{camera});
+        }
+        try {
+            startActivityForResult(launch, REQ_FILE);
+            return true;
+        } catch (Exception e) {
+            if (fileCallback != null) fileCallback.onReceiveValue(null);
+            fileCallback = null;
+            return false;
+        }
+    }
+
+    /** Cámara o micrófono en vivo para la página de Mesagri (nunca para otras páginas). */
+    private void webPermission(PermissionRequest request) {
+        Uri origin = request.getOrigin();
+        boolean ours = origin != null && (HOST.equals(origin.getHost()) || isServer(origin));
+        if (!ours) { request.deny(); return; }
+        ArrayList<String> need = new ArrayList<>();
+        for (String r : request.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r) && !granted(Manifest.permission.CAMERA)) need.add(Manifest.permission.CAMERA);
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r) && !granted(Manifest.permission.RECORD_AUDIO)) need.add(Manifest.permission.RECORD_AUDIO);
+        }
+        if (need.isEmpty()) { grantWeb(request); return; }
+        if (pendingWeb != null) pendingWeb.deny();
+        pendingWeb = request;
+        ask(need.toArray(new String[0]), REQ_WEB);
+    }
+
+    private void grantWeb(PermissionRequest request) {
+        ArrayList<String> ok = new ArrayList<>();
+        for (String r : request.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r) && granted(Manifest.permission.CAMERA)) ok.add(r);
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r) && granted(Manifest.permission.RECORD_AUDIO)) ok.add(r);
+        }
+        if (ok.isEmpty()) request.deny(); else request.grant(ok.toArray(new String[0]));
+    }
+
+    /* ---------------- Permisos del celular ---------------- */
+
+    private boolean granted(String perm) { return checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED; }
+
+    /** Pide permisos y recuerda que ya se pidieron (para saber si quedaron bloqueados). */
+    private void ask(String[] perms, int code) {
+        android.content.SharedPreferences.Editor e = getSharedPreferences(PREFS, MODE_PRIVATE).edit();
+        for (String p : perms) e.putBoolean("pedido:" + p, true);
+        e.apply();
+        requestPermissions(perms, code);
+    }
+
+    /** granted · prompt (aún no se pidió) · denied (se puede pedir otra vez) · blocked (solo desde los ajustes del celular). */
+    private String state(String perm) {
+        if (granted(perm)) return "granted";
+        boolean asked = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("pedido:" + perm, false);
+        if (!asked) return "prompt";
+        return shouldShowRequestPermissionRationale(perm) ? "denied" : "blocked";
+    }
+
+    private String locationState() {
+        if (granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION)) return "granted";
+        return state(Manifest.permission.ACCESS_FINE_LOCATION);
+    }
+
+    private String permissionsJson() {
+        return "{\"camera\":\"" + state(Manifest.permission.CAMERA) + "\",\"microphone\":\"" + state(Manifest.permission.RECORD_AUDIO) + "\",\"location\":\"" + locationState() + "\"}";
+    }
+
+    private static String[] androidPerms(String name) {
+        if ("camera".equals(name)) return new String[]{Manifest.permission.CAMERA};
+        if ("microphone".equals(name)) return new String[]{Manifest.permission.RECORD_AUDIO};
+        if ("location".equals(name)) return new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
+        return new String[0];
     }
 
     private static boolean acceptsImages(String[] types) {
@@ -416,9 +508,24 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
-        if (requestCode != REQ_LOCATION || geoCallback == null) return;
-        geoCallback.invoke(geoOrigin, hasLocation(), false);
-        geoCallback = null;
+        if (requestCode == REQ_LOCATION && geoCallback != null) {
+            geoCallback.invoke(geoOrigin, hasLocation(), false);
+            geoCallback = null;
+        } else if (requestCode == REQ_CAMERA && pendingPick != null) {
+            boolean cam = granted(Manifest.permission.CAMERA);
+            if (!cam) Toast.makeText(this, "Sin permiso de la cámara: elige una foto de tu galería.", Toast.LENGTH_LONG).show();
+            Intent pick = pendingPick;
+            pendingPick = null;
+            launchChooser(pick, pendingCapture && cam, cam);
+        } else if (requestCode == REQ_MIC) {
+            if (granted(Manifest.permission.RECORD_AUDIO)) startListening();
+            else heard(null, "Sin permiso del micrófono no podemos escucharte. Escribe la frase, o permite el micrófono en Perfil → Permisos de la app.");
+        } else if (requestCode == REQ_WEB && pendingWeb != null) {
+            grantWeb(pendingWeb);
+            pendingWeb = null;
+        } else if (requestCode == REQ_ASK) {
+            js("window.__mesagriPermissions && window.__mesagriPermissions(" + quote(permissionsJson()) + ")");
+        }
     }
 
     /* ---------------- Guardar o compartir archivos (PDF y CSV) ---------------- */
@@ -482,23 +589,115 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void stopSpeaking() { if (tts != null) tts.stop(); }
 
+        /** Escucha una frase: primero el permiso del micrófono; luego el dictado dentro de la app. */
         @JavascriptInterface
         public void listen() {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                    i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-                    i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-PE");
-                    i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Habla: qué cosechaste, cuánto y a qué precio");
-                    i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                    if (granted(Manifest.permission.RECORD_AUDIO)) startListening();
+                    else ask(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void stopListening() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() { if (recognizer != null) recognizer.stopListening(); }
+            });
+        }
+
+        /** Estado de los permisos: {"camera": "granted|prompt|denied|blocked", "microphone": …, "location": …}. */
+        @JavascriptInterface
+        public String permissions() { return permissionsJson(); }
+
+        /** Pide los permisos (camera, microphone, location separados por comas) en un solo cuadro del celular. */
+        @JavascriptInterface
+        public void askPermissions(final String names) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    ArrayList<String> need = new ArrayList<>();
+                    for (String n : (names == null ? "" : names).split(",")) {
+                        for (String p : androidPerms(n.trim())) if (!granted(p) && !need.contains(p)) need.add(p);
+                    }
+                    if (need.isEmpty()) js("window.__mesagriPermissions && window.__mesagriPermissions(" + quote(permissionsJson()) + ")");
+                    else ask(need.toArray(new String[0]), REQ_ASK);
+                }
+            });
+        }
+
+        /** Ajustes de Mesagri en el celular (para un permiso que quedó bloqueado). */
+        @JavascriptInterface
+        public void openSettings() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
                     try {
-                        startActivityForResult(i, REQ_VOICE);
+                        startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())));
                     } catch (Exception e) {
-                        heard(null, "Tu celular no tiene dictado por voz. Escribe la frase o elige una de ejemplo.");
+                        Toast.makeText(MainActivity.this, "Abre Ajustes → Apps → Mesagri → Permisos.", Toast.LENGTH_LONG).show();
                     }
                 }
             });
+        }
+    }
+
+    /** Dictado dentro de la app (con el reconocedor de voz del celular); si no hay, la ventana de dictado de Google. */
+    private void startListening() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) { dictationDialog(); return; }
+        try {
+            if (recognizer == null) recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            recognizer.setRecognitionListener(new RecognitionListener() {
+                @Override public void onReadyForSpeech(Bundle b) { js("window.__mesagriListening && window.__mesagriListening(true)"); }
+                @Override public void onBeginningOfSpeech() { }
+                @Override public void onRmsChanged(float v) { }
+                @Override public void onBufferReceived(byte[] b) { }
+                @Override public void onEndOfSpeech() { js("window.__mesagriListening && window.__mesagriListening(false)"); }
+                @Override public void onEvent(int t, Bundle b) { }
+                @Override
+                public void onPartialResults(Bundle b) {
+                    ArrayList<String> p = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    if (p != null && !p.isEmpty() && p.get(0) != null && !p.get(0).trim().isEmpty()) js("window.__mesagriPartial && window.__mesagriPartial(" + quote(p.get(0)) + ")");
+                }
+                @Override
+                public void onResults(Bundle b) {
+                    ArrayList<String> r = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    if (r != null && !r.isEmpty() && r.get(0) != null && !r.get(0).trim().isEmpty()) heard(r.get(0), null);
+                    else heard(null, "No te escuchamos. Intenta otra vez, más cerca del celular.");
+                }
+                @Override
+                public void onError(int e) {
+                    if (e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) heard(null, "Sin permiso del micrófono no podemos escucharte. Permítelo en Perfil → Permisos de la app.");
+                    else if (e == SpeechRecognizer.ERROR_NETWORK || e == SpeechRecognizer.ERROR_NETWORK_TIMEOUT || e == SpeechRecognizer.ERROR_SERVER) heard(null, "Para entender la voz hace falta internet. Escribe la frase o inténtalo con señal.");
+                    else heard(null, "No te escuchamos. Intenta otra vez, más cerca del celular.");
+                }
+            });
+            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-PE");
+            i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+            i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+            recognizer.startListening(i);
+        } catch (Exception e) {
+            dictationDialog();
+        }
+    }
+
+    /** Ventana de dictado del sistema (celulares sin reconocedor de voz para apps). */
+    private void dictationDialog() {
+        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-PE");
+        i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Habla: qué cosechaste, cuánto y a qué precio");
+        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        try {
+            startActivityForResult(i, REQ_VOICE);
+        } catch (Exception e) {
+            heard(null, "Tu celular no tiene dictado por voz. Escribe la frase o elige una de ejemplo.");
         }
     }
 
@@ -558,6 +757,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (tts != null) { tts.stop(); tts.shutdown(); tts = null; }
+        if (recognizer != null) { recognizer.destroy(); recognizer = null; }
         if (web != null) web.destroy();
         super.onDestroy();
     }

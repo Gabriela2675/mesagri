@@ -14,7 +14,7 @@ import { EngineService, SYSTEM_ONLY } from '../core/engine.service';
 import { Auth, Me } from '../auth/auth.guard';
 import { AuthService, type AuthUser } from '../auth/auth.service';
 import { CONFIG, BUILD_ID } from '../config';
-import { PROTOCOL, maskWorld } from '@mesagri/shared';
+import { PROTOCOL, maskWorld, viewerKind } from '@mesagri/shared';
 import { DomainHttpError } from '../common/errors';
 import { requireTeam } from '../common/team';
 import { viewerOf } from './viewer';
@@ -44,7 +44,7 @@ export class SyncController {
     if (tokenError) throw tokenError;
     await this.engine.whenReady;
     const world = maskWorld(this.engine.world, viewer);
-    const body = `{"protocol":${PROTOCOL},"build":${JSON.stringify(BUILD_ID)},"viewer":${JSON.stringify(viewer.kind)},"epoch":${JSON.stringify(this.engine.epoch)},"boot":${JSON.stringify(this.engine.boot)},"seq":${this.engine.seq},"serverNow":${Date.now()},"world":${encodeWorld(world)}}`;
+    const body = `{"protocol":${PROTOCOL},"build":${JSON.stringify(BUILD_ID)},"viewer":${JSON.stringify(viewerKind(viewer))},"epoch":${JSON.stringify(this.engine.epoch)},"boot":${JSON.stringify(this.engine.boot)},"seq":${this.engine.seq},"serverNow":${Date.now()},"world":${encodeWorld(world)}}`;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     if (/\bgzip\b/.test(enc ?? '')) {

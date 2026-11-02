@@ -110,6 +110,11 @@ on('LISTING_EDIT', (c) => {
     if (l.status === 'SOLD_OUT' && l.available > 0) l.status = 'ACTIVE';
   }
   if (p.minQty !== undefined) l.minQty = Math.max(0, Number(p.minQty) || 0);
+  if (p.photoIds !== undefined) {
+    // fotos de la cosecha: hasta 5, la primera es la portada (el sello «Cosechado hoy» no cambia)
+    if (!Array.isArray(p.photoIds) || p.photoIds.length > 5 || p.photoIds.some((x: unknown) => !/^[A-Za-z0-9:_.-]{3,80}$/.test(String(x)))) fail('BAD_PHOTOS', 'Puedes poner hasta 5 fotos.');
+    l.photoIds = [...new Set<string>(p.photoIds.map(String))];
+  }
 });
 
 on('LISTING_PAUSE', (c) => {

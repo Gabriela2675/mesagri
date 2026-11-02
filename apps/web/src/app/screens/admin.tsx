@@ -19,7 +19,8 @@ import { uid, digitsFrom } from '@mesagri/shared/ids';
 import { orgName, itemsShort, statusInfo, notifsFor, NOTIF_ICON, PAY_LABEL, deliveryText } from '../helpers';
 import { districtName, placeLabel } from '@mesagri/shared/ubigeo';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
-import { auth, api, setTeamKey } from '../net';
+import { auth, api, setTeamKey, type AdminSetup } from '../net';
+import { FirstAccess } from './access';
 import { appUrl } from '../routes';
 import { docPdf } from '../pdf';
 import type { World, Org, User, VerifCase, SubOrder, Dispute, Listing, AdminRole, Complaint } from '@mesagri/shared/types';
@@ -47,6 +48,8 @@ export const NAV: NavItem[] = [
   { s: 'W-10', l: 'Configuración', i: 'percent', roles: ['GENERAL'], group: ['W-10', 'W-18'], badge: w => Object.values(w.proposals).filter(p => p.status === 'PENDING').length },
   { s: 'W-11', l: 'Reportes', i: 'chart-column', roles: ['GENERAL', 'ANALYST'] },
   { s: 'W-12', l: 'Auditoría', i: 'lock', roles: ['GENERAL'] },
+  { s: 'W-19', l: 'Equipo', i: 'id-card', roles: ['GENERAL'] },
+  { s: 'W-20', l: 'Mi cuenta', i: 'circle-user', roles: ALL },
 ];
 const ROLE_LABEL: Record<Role, string> = { GENERAL: 'Administración general', VERIFIER: 'Verificación', SUPPORT: 'Soporte', ANALYST: 'Analista' };
 export const roleOf = (A: AppCtx): Role => (A.me?.adminRole ?? 'GENERAL') as Role;
@@ -171,6 +174,8 @@ function Login() {
   const [needKey, setNeedKey] = useState(false);
   const [key, setKey] = useState('');
   const [keyErr, setKeyErr] = useState('');
+  // primer ingreso con la clave temporal que dio la administración general
+  const [setup, setSetup] = useState<AdminSetup | null>(null);
   const loadTeam = (k?: string) => auth.team(k).then(list => { setTeam(list); setNeedKey(false); if (k) setTeamKey(k); }).catch((e: any) => {
     setTeam([]);
     if (e?.code === 'TEAM_KEY') { setNeedKey(true); if (k) setKeyErr('Esa no es la clave del equipo.'); }
@@ -179,14 +184,20 @@ function Login() {
   const enter = async () => {
     if (!email.includes('@')) { setErr('Escribe tu correo del equipo.'); return; }
     if (pass.length < 8) { setErr('La contraseña tiene al menos 8 caracteres.'); return; }
-    if (code.length !== 6) { setErr('Escribe el código de 6 dígitos de tu app de autenticación.'); return; }
+    if (code && code.length !== 6) { setErr('El código de tu app de autenticación tiene 6 dígitos.'); return; }
     setBusy(true);
     try {
       const r = await auth.admin(email.trim(), pass, code);
-      A.store.sessions.set(r.session);
-      A.act('AUDIT_VIEW', { entity: 'panel', detail: 'Ingresó al panel con doble factor' }, { as: r.userId, quiet: true });
-      A.login(r.userId);
-    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+      if (r.setup) { setSetup(r.setup); return; }
+      enterWith(r.userId, r.session!);
+    } catch (e: any) {
+      setErr(e?.code === 'BAD_LOGIN' && !code ? 'Revisa tu correo y tu contraseña, y escribe el código de 6 dígitos de tu app de autenticación (con la clave temporal no hace falta).' : e.message);
+    } finally { setBusy(false); }
+  };
+  const enterWith = (userId: string, session: Parameters<typeof A.store.sessions.set>[0]) => {
+    A.store.sessions.set(session);
+    A.act('AUDIT_VIEW', { entity: 'panel', detail: 'Ingresó al panel con doble factor' }, { as: userId, quiet: true });
+    A.login(userId);
   };
   // cuentas del equipo (demo): el servidor da el código vigente del doble factor
   const fill = async (x: TeamMember) => {
@@ -195,6 +206,20 @@ function Login() {
     setEmail(m.email); setPass(m.password); setCode(m.code); setErr('');
   };
   const admins = team.length ? team : [];
+  if (setup) return (
+    <div className="wlogin">
+      <div className="wlogin-l">
+        <div className="wbrand"><Mark size={92} /><div><b>Mesagri</b><span>Panel de administración</span></div></div>
+        <h2>Tu cuenta del equipo es solo tuya.</h2>
+        <ul>
+          <li><Icon n="key-round" s="18" />Tu contraseña: nadie más la conoce, ni la administración general</li>
+          <li><Icon n="smartphone" s="18" />El doble factor vive en tu celular: sin él no se entra</li>
+          <li><Icon n="lock" s="18" />Cada decisión que tomes queda en la auditoría con tu nombre</li>
+        </ul>
+      </div>
+      <FirstAccess setup={setup} temp={pass} onDone={r => { setSetup(null); setPass(''); enterWith(r.userId, r.session); }} onCancel={why => { setSetup(null); setPass(''); setCode(''); if (why) setErr(why); }} />
+    </div>
+  );
   return (
     <div className="wlogin">
       <div className="wlogin-l">
@@ -211,7 +236,7 @@ function Login() {
         <h1>Ingresar</h1>
         <label className="fld"><span className="lbl">Correo del equipo</span><input className="inp" type="email" autoComplete="username" value={email} onChange={(e: any) => { setEmail(e.currentTarget.value); setErr(''); }} placeholder="nombre@mesagri.pe" /></label>
         <label className="fld"><span className="lbl">Contraseña</span><span className="inpwrap"><input className="inp" type={show ? 'text' : 'password'} autoComplete="current-password" value={pass} onChange={(e: any) => { setPass(e.currentTarget.value); setErr(''); }} /><button type="button" className="suf" style={{ pointerEvents: "auto", border: "0", background: "transparent", cursor: "pointer" }} aria-label={show ? 'Ocultar contraseña' : 'Mostrar contraseña'} onClick={() => setShow(!show)}><Icon n={show ? 'eye-off' : 'eye'} s="18" /></button></span></label>
-        <label className="fld"><span className="lbl">Código de tu app de autenticación</span><input className="inp tnum" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e: any) => { setCode(e.currentTarget.value.replace(/\D/g, '').slice(0, 6)); setErr(''); }} placeholder="6 dígitos" style={{ letterSpacing: ".3em", fontWeight: "900" }} /></label>
+        <label className="fld"><span className="lbl">Código de tu app de autenticación <span className="cap" style={{ fontWeight: 600 }}>(la primera vez, con tu clave temporal, déjalo vacío)</span></span><input className="inp tnum" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e: any) => { setCode(e.currentTarget.value.replace(/\D/g, '').slice(0, 6)); setErr(''); }} placeholder="6 dígitos" style={{ letterSpacing: ".3em", fontWeight: "900" }} /></label>
         {err && <div className="errt" role="alert"><Icon n="circle-alert" s="16" />{err}</div>}
         <Btn full kind="dark" type="submit" disabled={busy}>{busy ? <i className="spin" /> : null}Ingresar</Btn>
         <p className="wnote" style={{ margin: "0" }}>Doble factor obligatorio. La sesión se cierra a los 30 minutos sin uso. Los accesos quedan en auditoría (W-12).</p>

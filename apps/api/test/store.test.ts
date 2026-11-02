@@ -138,18 +138,18 @@ describe('Mundo ↔ MySQL', () => {
     await ok('u-elena', 'REVIEW_SUBMIT', { subOrderId: 'so-rt-6', side: 'BUYER', reviewId: 'rv-rt', stars: 5, tags: ['Puntual'], comment: 'Muy buena cebolla.' });
     await act('u-andres', 'FAVORITE_TOGGLE', { orgId: 'org-hotel', kind: 'sellers', id: 'org-wilber' });
     // configuración con doble aprobación y traducción
-    await act('u-carlos', 'SETTING_PROPOSE', { proposalId: 'prop-rt', key: 'orderResponseHours', value: 10, reason: 'Pedidos de hoteles más rápidos', effectiveFrom: w.now + DAY });
-    await act('u-monica', 'SETTING_APPROVE', { proposalId: 'prop-rt' });
-    await act('u-carlos', 'TRANSLATION_SET', { key: 'product.papa_amarilla', lang: 'qu', text: "Q'illu papa", status: 'REVIEWED' });
+    await act('u-majo', 'SETTING_PROPOSE', { proposalId: 'prop-rt', key: 'orderResponseHours', value: 10, reason: 'Pedidos de hoteles más rápidos', effectiveFrom: w.now + DAY });
+    await act('u-gaby', 'SETTING_APPROVE', { proposalId: 'prop-rt' });
+    await act('u-majo', 'TRANSLATION_SET', { key: 'product.papa_amarilla', lang: 'qu', text: "Q'illu papa", status: 'REVIEWED' });
     // pagos del estado de cuenta: uno observado (libera el número) y uno conciliado
     const due = Object.values(w.statements).filter(s => s.status === 'ISSUED' || s.status === 'OVERDUE');
     if (due[0]) {
       const st = due[0];
       const owner = Object.values(w.users).find(u => u.orgId === st.orgId)!;
       await act(owner.id, 'STATEMENT_PAY', { statementId: st.id, method: 'YAPE', operation: '77001122' });
-      await act('u-carlos', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: st.id, ok: false, note: 'El número no aparece en el banco.' });
+      await act('u-majo', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: st.id, ok: false, note: 'El número no aparece en el banco.' });
       await act(owner.id, 'STATEMENT_PAY', { statementId: st.id, method: 'YAPE', operation: '77001123' });
-      await act('u-carlos', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: st.id, ok: true });
+      await act('u-majo', 'BILLING_RECONCILE', { kind: 'STATEMENT', id: st.id, ok: true });
     }
     // entrega R2: solicitud de compra con oferta aceptada (genera el pedido), pedido programado aprobado,
     // equipo y locales de la MYPE, quién publica por el agricultor y un producto nuevo del catálogo
@@ -175,7 +175,7 @@ describe('Mundo ↔ MySQL', () => {
     await ok('u-justina', 'DELEGATE_SET', { userId: 'u-ruben', perms: ['PUBLICAR', 'PEDIDOS'] });
     await ok('u-wilber', 'DELEGATE_SET', { userId: 'u-nayeli', active: false });
     expect(w.users['u-nayeli'].status).toBe('SUSPENDED');
-    await ok('u-carlos', 'CATALOG_ADD', { name: 'Kiwicha', category: 'GRANOS', units: ['kg', 'saco'], chacra: 4.5, mayorista: 6.8, perishDays: 180, storable: true, synonyms: ['amaranto'] });
+    await ok('u-majo', 'CATALOG_ADD', { name: 'Kiwicha', category: 'GRANOS', units: ['kg', 'saco'], chacra: 4.5, mayorista: 6.8, perishDays: 180, storable: true, synonyms: ['amaranto'] });
     expect(w.catalogExtra['kiwicha']).toBeTruthy();
     // pasan 40 días: vencimientos, cierre de mes, membresías y publicaciones vencidas
     await ok('system', 'CLOCK_TICK', {}, 40 * DAY);

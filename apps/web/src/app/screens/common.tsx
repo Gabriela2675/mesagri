@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { reg } from './registry';
 import { useApp, type AppCtx } from '../ctx';
+import { permissionStates, askPermissions, openAppSettings, type PermName } from '../platform';
 import { Screen, Btn, Icon, Field, Inp, Card, Chip, Seg, Tog, Av, ICirc, Empty, Note, SheetBody, Kv, Sel } from '../ui/kit';
 import { conversations, orgName, itemsShort, notifsFor, NOTIF_ICON, groupByDay, when } from '../helpers';
 import { hhmm, relDay, dateShort, dateNum, money, ago } from '@mesagri/shared/format';
@@ -265,6 +266,68 @@ function Notifications() {
         ))}
       </div>
     </Screen>
+  );
+}
+
+/* ---------- Permisos de la app (APK) ---------- */
+const PERM_INFO: Record<PermName, { icon: string; label: string }> = { camera: { icon: 'camera', label: 'Cámara' }, microphone: { icon: 'mic', label: 'Micrófono' }, location: { icon: 'map-pin', label: 'Ubicación' } };
+/** Lo que usa cada perfil: el agricultor publica con fotos, con la voz y marca su chacra; los demás, fotos. */
+export const permsFor = (role?: string): PermName[] => (role === 'FARMER' ? ['camera', 'microphone', 'location'] : role && role !== 'ADMIN' ? ['camera'] : []);
+const permWhy = (n: PermName, role?: string) => n === 'camera'
+  ? (role === 'FARMER' ? 'Fotos de tu cosecha y de tu DNI' : role === 'CARRIER' ? 'Fotos del recojo y de la entrega, y leer el QR' : role === 'WAREHOUSE' ? 'Fotos de los lotes que recibes' : 'Fotos de lo que recibes y de tu DNI')
+  : n === 'microphone' ? 'Publicar tu cosecha hablando, sin escribir' : 'Marcar dónde está tu chacra';
+
+export function PermsSheet({ first }: { first?: boolean }) {
+  const A = useApp();
+  const names = permsFor(A.me?.role);
+  const [st, setSt] = useState(permissionStates());
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    // al volver de los ajustes del celular
+    const f = () => { if (document.visibilityState === 'visible') setSt(permissionStates()); };
+    document.addEventListener('visibilitychange', f);
+    return () => document.removeEventListener('visibilitychange', f);
+  }, []);
+  const ask = async (list: PermName[]) => { setBusy(true); setSt(await askPermissions(list)); setBusy(false); };
+  const missing = names.filter(n => st[n] !== 'granted');
+  const blocked = names.filter(n => st[n] === 'blocked');
+  const askable = missing.filter(n => st[n] !== 'blocked');
+  return (
+    <SheetBody title={first ? 'Para que Mesagri funcione bien' : 'Permisos de la app'} sub={first ? 'Mesagri te pide permiso solo para lo que usas. Puedes cambiarlo cuando quieras en Perfil → Permisos de la app.' : 'Lo que Mesagri puede usar de tu celular, y para qué.'}>
+      <Card>{names.map(n => (
+        <div key={n} className="row top" style={{ padding: '.45em 0' }}>
+          <ICirc n={PERM_INFO[n].icon} />
+          <div className="grow"><b className="bodym">{PERM_INFO[n].label}</b><div className="cap">{permWhy(n, A.me?.role)}</div></div>
+          {st[n] === 'granted' ? <Chip tone="leaf" icon="check">Permitido</Chip> : st[n] === 'blocked' ? <Chip tone="warn">Bloqueado</Chip> : <Btn xs kind="sec" disabled={busy} onClick={() => void ask([n])}>Permitir</Btn>}
+        </div>
+      ))}</Card>
+      {blocked.length > 0 && <Note icon="triangle-alert" tone="warn">Android ya no muestra el cuadro para {blocked.map(n => PERM_INFO[n].label.toLowerCase()).join(' y ')}: actívalo en los ajustes del celular, en Permisos.</Note>}
+      {blocked.length > 0 && <Btn full kind="sec" icon="settings" onClick={() => openAppSettings()}>Abrir ajustes del celular</Btn>}
+      {askable.length > 0 && <Btn full kind="dark" loading={busy} onClick={() => void ask(askable)}>{askable.length > 1 ? 'Permitir todo' : `Permitir ${PERM_INFO[askable[0]].label.toLowerCase()}`}</Btn>}
+      <Btn full kind={missing.length ? 'sec' : 'dark'} onClick={() => A.sheet(null)}>{missing.length && first ? 'Ahora no' : 'Listo'}</Btn>
+    </SheetBody>
+  );
+}
+
+/* ---------- Tu nombre: cómo te llamamos ---------- */
+export function NameSheet() {
+  const A = useApp();
+  const me = A.me!;
+  const [short, setShort] = useState(me.shortName);
+  const [err, setErr] = useState('');
+  const save = () => {
+    const v = short.trim().replace(/\s+/g, ' ');
+    if (v === me.shortName) { A.sheet(null); return; }
+    const r = A.act('PROFILE_SET', { shortName: v }, { quiet: true, ok: `Listo: te llamamos ${v}.` });
+    if (r.ok) A.sheet(null); else setErr(r.error?.message ?? 'No pudimos guardar tu nombre.');
+  };
+  return (
+    <SheetBody title="Tu nombre" sub="Así te saludamos en la app y así te ven tus compradores, agricultores y transportistas.">
+      <Field label="¿Cómo quieres que te llamemos?" error={err}><Inp value={short} onInput={v => { setShort(v); setErr(''); }} max={30} label="Cómo quieres que te llamemos" autoComplete="nickname" /></Field>
+      <Kv rows={[['Nombre completo', me.name], ['Celular', me.phone]]} />
+      <Note>Tu nombre completo es el de tu DNI y tu celular es con el que entras. Si alguno tiene un error, escríbele a Soporte desde «Ayuda».</Note>
+      <Btn full kind="dark" onClick={save}>Guardar</Btn>
+    </SheetBody>
   );
 }
 

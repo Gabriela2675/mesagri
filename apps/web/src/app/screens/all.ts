@@ -10,3 +10,4 @@ import './carrier';
 import './admin';
 import './admin2';
 import './r2';
+import './team';

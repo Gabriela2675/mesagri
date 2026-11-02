@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Pool } from 'mysql2/promise';
-import { applySafe, emptyWorld, structuredCloneSafe, hasDue, SEED_ANCHOR, uid, HANDLERS, WorldTracker } from '@mesagri/shared';
+import { applySafe, emptyWorld, structuredCloneSafe, hasDue, SEED_ANCHOR, SEED_VERSION, uid, HANDLERS, WorldTracker } from '@mesagri/shared';
 import type { MEvent, World, Changes } from '@mesagri/shared';
 import { CONFIG } from '../config';
 import { createPool, exec, rows, tx, upsert, js } from '../db/db';
@@ -61,6 +61,8 @@ export class EngineService implements OnModuleInit, OnApplicationShutdown {
   readonly tracker = new WorldTracker();
   /** Lo que se hace después de crear los datos de ejemplo (claves del equipo, por ejemplo). */
   readonly seedHooks: ((w: World) => Promise<void>)[] = [];
+  /** Cambios a la historia de ejemplo antes de guardarla (el equipo de Mesagri vuelve con sus datos). */
+  readonly seedTransforms: ((w: World) => Promise<void>)[] = [];
   private chain: Promise<unknown> = Promise.resolve();
   private timer?: NodeJS.Timeout;
   ready = false;
@@ -92,7 +94,15 @@ export class EngineService implements OnModuleInit, OnApplicationShutdown {
     }
     this.store = new Persistence(this.pool);
     await this.store.init();
-    if (await this.store.hasWorld()) {
+    const stale = CONFIG.demo && (await this.store.hasWorld()) && (await this.getState<string>('seedVersion')) !== SEED_VERSION;
+    if (stale) {
+      // la historia de ejemplo cambió (modo demo): se carga la nueva una vez, con época nueva; el equipo se conserva
+      this.log.log(`La historia de ejemplo cambió (${SEED_VERSION}): se vuelve a cargar`);
+      await this.store.reset();
+      await this.seed();
+      await this.newEpoch();
+      await this.setState('clock', { simNow: this.simNow(), realAt: Date.now() });
+    } else if (await this.store.hasWorld()) {
       const t0 = Date.now();
       this.world = await this.store.load();
       this.log.log(`Mundo leído de MySQL en ${Date.now() - t0} ms`);
@@ -115,11 +125,13 @@ export class EngineService implements OnModuleInit, OnApplicationShutdown {
     const w = emptyWorld();
     const r = applySafe(w, { id: 'init-' + uid(), type: 'WORLD_INIT', actor: 'system', t: SEED_ANCHOR, lamport: 0, p: { realAt: Date.now() } });
     if (!r.ok) throw new Error('No se pudo crear el mundo de ejemplo: ' + r.error?.message);
+    for (const f of this.seedTransforms) await f(w);
     await tx(this.pool, async c => {
       const { commit } = await this.store.persist(c, undefined, w);
       commit();
     });
     this.world = w;
+    await this.setState('seedVersion', SEED_VERSION);
     for (const h of this.seedHooks) await h(w);
     this.log.log(`Datos de ejemplo guardados en MySQL en ${Date.now() - t0} ms`);
   }
@@ -261,11 +273,13 @@ export class EngineService implements OnModuleInit, OnApplicationShutdown {
   /* ---------------- Demo ---------------- */
 
   /** Reinicia la demo: vacía los datos (no el catálogo), vuelve a la historia de ejemplo y cambia la época. */
-  async reset(): Promise<void> {
+  async reset(opts: { team?: boolean } = {}): Promise<void> {
     await this.exclusive(async () => {
       this.ready = false;
       try {
         await this.store.reset();
+        // también el equipo: vuelven las cuentas de prueba del panel tal como están en la historia de ejemplo
+        if (opts.team) await exec(this.pool, 'DELETE FROM team_accounts');
         await this.seed();
         this.tracker.reset(this.world);
         this.epoch = await this.newEpoch();

@@ -89,6 +89,22 @@ dos cargos, RF-PAY-05).
   tokens de refresco) y queda en auditoría.
 - Panel con contraseña **Argon2id** y doble factor **TOTP** (RFC 6238, compatible con Google o
   Microsoft Authenticator); 5 intentos fallidos bloquean la cuenta 15 minutos.
+- **Equipo del panel** (`apps/api/src/domain/team.controller.ts`, W-19): la administración general
+  agrega personas con su rol (`STAFF_ADD`, `STAFF_ROLE_SET`, `STAFF_STATUS_SET`,
+  `STAFF_ACCESS_RESET` en `packages/shared/src/engine/r2.ts`). El servidor da una clave temporal
+  (`password_temp`, vence en 72 h). En el primer ingreso (`/auth/admin/login` responde `setup`) la
+  persona crea su contraseña y activa su doble factor con un permiso de 20 minutos que sirve una
+  vez (`/auth/admin/setup`): el secreto solo lo ve ella. Una cuenta de prueba se hace propia en
+  «Mi cuenta» (`/auth/admin/2fa/start` y `/finish`), que además cierra las otras sesiones.
+  Pausar a alguien invalida su sesión al instante (`verifyAccess`) y su canal en vivo pasa a
+  anónimo; al cambiar de rol, su conexión recibe de nuevo lo que el rol permite.
+- **Analistas sin datos personales**: el perfil `admin` con `analyst` recibe del servidor el mundo
+  enmascarado como el público (sin DNI, celulares, direcciones, mensajes ni auditoría), más los
+  avisos del equipo. El correo y el celular del equipo nunca son públicos.
+- **El equipo se conserva al reiniciar la demo**: `team_accounts` guarda datos, rol, estado y claves
+  de quien fue agregado o hizo suya su cuenta, y se vuelve a poner sobre la historia nueva
+  (`TeamAccounts`, `seedTransforms`). Con `{"team": true}` en `/demo/reset` vuelven las cuentas de
+  prueba del equipo.
 - Token de acceso JWT de 15 minutos y token de refresco rotativo guardado como hash: si se
   reutiliza uno ya rotado, se cierran todas las sesiones de ese usuario.
 - Cuentas de cobro y códigos de entrega cifrados con **AES-256-GCM** (`DATA_KEY`); la base guarda
@@ -114,6 +130,9 @@ difunde como cualquier otra.
   móvil usa los endpoints REST, que ya filtran por rol y organización.
 - **Reloj de la demo**: arranca el martes 3 de noviembre de 2026, 8:30 (hora de Lima) y se puede
   adelantar. Con `DEMO_CLOCK=resume` sigue donde quedó al apagar el servidor.
+- **Versión de la historia de ejemplo** (`SEED_VERSION` en `packages/shared/src/seed.ts`): si
+  cambia, el servidor en modo demo y la app sin internet cargan la historia nueva una sola vez (con
+  época nueva); el equipo de Mesagri se conserva.
 - **Códigos visibles**: sin proveedor de WhatsApp o SMS, el código de ingreso se muestra en pantalla.
 
 ## Versión autónoma (APK y app web instalable)

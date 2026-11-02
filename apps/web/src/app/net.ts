@@ -179,6 +179,11 @@ export interface OtpSent {
   wa?: { link: string; number: string };
 }
 
+/** Doble factor por activar: el secreto se escanea con Google Authenticator o Microsoft Authenticator. */
+export interface TotpSetup { secret: string; uri: string }
+/** Primer ingreso de una persona del equipo con su clave temporal. */
+export interface AdminSetup { token: string; email: string; name?: string; adminRole?: string; totp: TotpSetup }
+
 export const auth = {
   /**
    * channel SMS: el código llegó por SMS (to: número enmascarado).
@@ -193,7 +198,9 @@ export const auth = {
     saveDeviceKey(phone, r.deviceKey, r.userId);
     return r;
   },
-  admin: (email: string, password: string, code: string) => api<{ userId: string; session: Session }>('/auth/admin/login', { body: { email, password, code, device: 'panel web' } }),
+  /** Con una clave temporal (persona nueva del equipo) responde setup: crea su contraseña y activa su doble factor. */
+  admin: (email: string, password: string, code: string) => api<{ userId: string; session?: Session; setup?: AdminSetup }>('/auth/admin/login', { body: { email, password, code, device: 'panel web' } }),
+  adminSetup: (token: string, password: string, code: string) => api<{ userId: string; session: Session }>('/auth/admin/setup', { body: { token, password, code, device: 'panel web' } }),
   team: (key?: string) => api<{ userId: string; name: string; email: string; adminRole: string; password: string; code: string; validFor: number }[]>('/demo/team', { headers: { 'x-team-key': key ?? teamKey() ?? '' } }),
   logout: (refreshToken: string) => api('/auth/logout', { body: { refreshToken } }).catch(() => undefined),
 };

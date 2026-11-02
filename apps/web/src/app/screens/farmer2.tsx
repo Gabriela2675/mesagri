@@ -19,7 +19,8 @@ import { r2 } from '@mesagri/shared/rules';
 import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { districtOptions } from './onboarding';
-import { PrefsSheet, PrivacySheet } from './common';
+import { PrefsSheet, PrivacySheet, NameSheet, PermsSheet } from './common';
+import { canAskPermissions } from '../platform';
 import type { Statement } from '@mesagri/shared/types';
 
 /* ---------- A-16 · Mis chacras ---------- */
@@ -160,6 +161,8 @@ function Profile() {
       <div className="stack">
         <HelperBanner />
         <Card><div className="list">
+          {item('user', 'Tu nombre', `Te llamamos ${me.shortName}`, () => A.sheet(<NameSheet />))}
+          {canAskPermissions() && item('smartphone', 'Permisos de la app', 'Cámara, micrófono y ubicación', () => A.sheet(<PermsSheet />))}
           {item('globe', 'Idioma', `${me.prefs.lang === 'es' ? 'Castellano' : me.prefs.lang === 'qu' ? 'Runasimi' : 'Aymar aru'} · guía de audio ${me.prefs.audioGuide ? 'activada' : 'apagada'}`, () => A.sheet(<PrefsSheet />))}
           {item('banknote', 'Cuentas de cobro', acct ? `${acct.kind === 'BANK' ? 'Cuenta' : acct.kind === 'PLIN' ? 'Plin' : 'Yape'} ···· ${acct.number.slice(-3)} · ${acct.relation === 'PROPIA' ? 'a mi nombre' : 'de ' + acct.holder}${org.acceptsCash ? ' · y efectivo' : ''}` : org.acceptsCash ? 'Solo efectivo' : 'Sin cuenta', () => A.go('A-06'))}
           {item('map', 'Mis chacras y zonas', `${farms.length} ${farms.length === 1 ? 'chacra' : 'chacras'} · entrega en ${org.serviceAreas.length} distritos`, () => A.sheet(<SheetBody title="Chacras y zonas"><Btn full kind="sec" icon="sprout" onClick={() => A.go('A-16')}>Mis chacras</Btn><Btn full kind="sec" icon="map-pin" onClick={() => A.go('A-07')}>Zonas y días de entrega</Btn></SheetBody>))}

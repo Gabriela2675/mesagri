@@ -31,14 +31,36 @@ Viene de tres formas:
 
 | Tipo de usuario | Funciones |
 |---|---|
-| Agricultor | Publicar cosecha (formulario o voz), pedidos con plazo y comisión a la vista, confirmar pagos, entregar con código, enviar con transportista (QR), almacén, estado de cuenta, chat, calificaciones, verificación por niveles, **solicitudes de compra** (ofrecer su precio) y **quién publica por mí** (familiar o promotor con permisos) |
+| Agricultor | Publicar cosecha (formulario o voz) **con fotos reales** (hasta 3, de la cámara o la galería; se cambian después en «Editar»), pedidos con plazo y comisión a la vista, confirmar pagos, entregar con código, enviar con transportista (QR), almacén, estado de cuenta, chat, calificaciones, verificación por niveles, **solicitudes de compra** (ofrecer su precio) y **quién publica por mí** (familiar o promotor con permisos) |
 | Comprador MYPE | Catálogo con filtros, carrito por agricultor, pago directo (Yape, Plin, transferencia, efectivo), seguimiento, conformidad, reclamos, comprobantes, reportes, favoritos, planes Básico y Pro, **solicitudes de compra**, **pedidos programados** (Pro), **equipo y locales** con permisos |
 | Almacén aliado | Reservas, recepción con foto y peso, lotes y certificados, despachos, incidencias, cobros |
 | Transportista aliado | Ofertas de envío, ruta del día, recojo con **QR de la cámara**, entrega con código, flete, cobros, **conductores** y **cambio de vehículo** (vuelve a revisión) |
-| Equipo de Mesagri (panel web) | Inicio con indicadores, verificaciones (bandeja y expediente), almacenes y transportistas (verificación y red), usuarios y organizaciones (**restablecer acceso**), moderación de publicaciones, pedidos y disputas, reclamos, catálogo y traducciones (**agregar productos**), cobros y estados de cuenta, configuración con aprobación de dos personas, tarifas y rutas de envío, reportes y auditoría. Cada rol (administración, verificación, soporte, analista) ve solo lo suyo |
+| Equipo de Mesagri (panel web) | Inicio con indicadores, verificaciones (bandeja y expediente), almacenes y transportistas (verificación y red), usuarios y organizaciones (**restablecer acceso**), moderación de publicaciones, pedidos y disputas, reclamos, catálogo y traducciones (**agregar productos**), cobros y estados de cuenta, configuración con aprobación de dos personas, tarifas y rutas de envío, reportes, auditoría, **Equipo** (la administración general crea cuentas y asigna roles) y **Mi cuenta**. Cada rol (administración general, verificación, soporte, analista) ve solo lo suyo |
 
 Botones reales del celular: llamar (abre el marcador), cómo llegar (Google Maps), ubicación de la
-chacra (GPS), fotos con la cámara y lectura del QR desde la foto.
+chacra (GPS), fotos con la cámara o de la galería y lectura del QR desde la foto. Cada persona elige
+**cómo la llamamos** (Perfil → Tu nombre); el nombre completo es el del DNI.
+
+## Equipo de Mesagri: cuentas y roles del panel
+
+- **Administración general**: Majo, Gaby, Dayis y Kevin (majo@, gaby@, dayis@ y kevin@mesagri.pe).
+  Empiezan como cuentas de prueba (clave de la demo y código que se ve con la clave del equipo).
+  Cada uno entra, va a **Mi cuenta**, personaliza su nombre, correo y celular, y toca **Hacer mía
+  esta cuenta**: crea su contraseña y activa el doble factor con Google Authenticator o Microsoft
+  Authenticator. Desde ese momento solo esa persona entra y la cuenta deja de aparecer en la lista
+  de prueba.
+- **Agregar a alguien** (solo administración general): **Equipo → Agregar persona** con nombre,
+  correo, celular y rol (verificación, soporte, analista o administración general). El panel da
+  una **clave temporal** (sirve una vez y vence en 3 días) para pasarla en persona, por llamada o
+  con el botón **Enviar por WhatsApp**. En su primer ingreso, la persona escribe su correo y esa
+  clave (sin código), crea su contraseña y activa su doble factor: nadie más los conoce.
+- **Cambiar el rol, pausar o dar un acceso nuevo** (si olvidó la contraseña o perdió el celular)
+  desde la ficha de cada persona en **Equipo**. Al pausar se cierran sus sesiones al instante. Siempre
+  queda al menos una persona de administración general; nadie puede pausarse a sí mismo.
+- **Qué ve cada rol** está en la misma pantalla (sale del menú del panel). El servidor revisa el rol
+  en cada acción, y a quien es **analista** le llegan los datos sin información personal.
+- **Reiniciar la demo no borra al equipo**: las personas agregadas, los roles, los datos
+  personalizados y las claves propias se conservan. Todo queda en la auditoría.
 
 ## En la nube (Render + Aiven)
 
@@ -138,17 +160,22 @@ mensajes respondidos hoy y el último error).
 | **Android 7 o más** | `Mesagri.apk` (por WhatsApp, Google Drive o un enlace) | Abrir el archivo → permitir **Instalar apps desconocidas** para la app con que se abrió (WhatsApp, Drive o Archivos) → **Instalar**. Si Play Protect avisa, **Más detalles → Instalar de todas formas** (la app no está en Play Store). |
 | **iPhone** y cualquier celular | El enlace <https://mesagri.onrender.com> | Abrir el enlace en el navegador. En iPhone se puede dejar en la pantalla de inicio con **Compartir → Agregar a inicio**. |
 
-- **El APK (versión 1.1.0) se conecta a la nube**: abre `https://mesagri.onrender.com` y todos ven
+- **El APK (versión 1.2.0) se conecta a la nube**: abre `https://mesagri.onrender.com` y todos ven
   lo mismo según su perfil. Sin internet ofrece **Probar sin internet**: la versión autónoma con
   datos de ejemplo guardados solo en ese celular (desde ahí, **Usar la versión en línea** vuelve a
   la nube). Si la dirección del servidor cambia, en la pantalla de conexión está **Cambiar la
-  dirección**. Se instala encima del APK 1.0.0 (misma firma).
+  dirección**. Se instala encima del APK anterior (misma firma).
 - En la versión autónoma **cada celular tiene sus propios datos de ejemplo**. Lo que se haga queda
   guardado en ese celular; en la pantalla de inicio está **Volver a los datos de ejemplo**.
 - El código de 6 dígitos para entrar se muestra en pantalla (no hay proveedor de SMS); el panel
   del equipo se abre desde **Ya tengo cuenta → Equipo de Mesagri**, con las cuentas de prueba.
 - En el APK funcionan la cámara (fotos y QR), el GPS de la chacra, las llamadas, los mapas, el
   dictado por voz y la guía de audio del celular, y los PDF y CSV se guardan o se comparten.
+- **Permisos**: el APK pide la **cámara** al tomar una foto, el **micrófono** al publicar hablando
+  (el dictado corre dentro de la app) y la **ubicación** al marcar la chacra. La primera vez que
+  alguien entra, un cuadro le pide juntos los que usa su perfil (el agricultor: los tres; los
+  demás: la cámara). Se revisan en **Perfil → Permisos de la app**; si Android dejó uno bloqueado,
+  el botón **Abrir ajustes del celular** lleva a activarlo.
 - **Actualizar el APK**: `MESAGRI_SERVER=https://mesagri.onrender.com bash apps/android/build.sh`
   en Linux (Ubuntu) deja un `Mesagri.apk` nuevo (requisitos en la cabecera del script; sin
   `MESAGRI_SERVER` sale solo la versión autónoma). Se firma con la llave de `apps/android/firma`
@@ -216,9 +243,11 @@ proveedor de WhatsApp o SMS; en el piloto llegaría por mensaje):
 | Almacén aliado | Don Ernesto · Molinera La Pampa | 954 109 870 |
 | Transportista aliado | Julio Apaza · Transportes Majes | 942 615 418 |
 
-- **Panel**: carlos@mesagri.pe, monica@mesagri.pe (administración), lucia@mesagri.pe (verificación),
-  diana@mesagri.pe (soporte), ana@mesagri.pe (analista). Clave: `demo-mesagri`. El código del doble
-  factor lo llenan los botones «Cuentas de prueba del equipo» (cambia cada 30 segundos).
+- **Panel**: majo@, gaby@, dayis@ y kevin@mesagri.pe (administración general), lucia@ y marco@
+  (verificación), diana@ (soporte) y ana@mesagri.pe (analista), mientras sigan siendo cuentas de
+  prueba. Clave: `demo-mesagri` en la versión sin internet; en la nube, la que se ve con la clave
+  del equipo. El código del doble factor lo llenan los botones «Cuentas de prueba del equipo»
+  (cambia cada 30 segundos).
 - Si un celular está registrado con otro tipo, la app lo avisa y ofrece entrar con el tipo correcto.
 
 Todo lo que se hace queda en MySQL y se ve en vivo en los demás celulares conectados.

@@ -714,3 +714,129 @@ on('CATALOG_ADD', (c: Ctx) => {
 });
 
 void startOfDay; void HOUR;
+
+/* ======================= Equipo de Mesagri: cuentas del panel y sus roles (W-19) ======================= */
+
+/** Qué ve y qué puede hacer cada rol del panel (se muestra al asignarlo). */
+export const ADMIN_ROLE_INFO: Record<'GENERAL' | 'VERIFIER' | 'SUPPORT' | 'ANALYST', { label: string; can: string }> = {
+  GENERAL: { label: 'Administración general', can: 'Todo el panel: verificaciones, usuarios, pedidos, cobros, configuración, auditoría y el equipo (crea cuentas y asigna roles).' },
+  VERIFIER: { label: 'Verificación', can: 'Revisa expedientes de agricultores, compradores, almacenes y transportistas, y ve los usuarios.' },
+  SUPPORT: { label: 'Soporte', can: 'Atiende pedidos, disputas, reclamos, publicaciones, envíos y restablece accesos.' },
+  ANALYST: { label: 'Analista', can: 'Ve reportes e indicadores, sin datos personales.' },
+};
+const ADMIN_ROLES = Object.keys(ADMIN_ROLE_INFO) as User['adminRole'][];
+const isEmail = (s: string) => /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,24}$/i.test(s);
+const activeGenerals = (w: World) => Object.values(w.users).filter(u => u.role === 'ADMIN' && u.adminRole === 'GENERAL' && u.status === 'ACTIVE');
+function teamMember(w: World, id: string): User {
+  const u = must(w.users[id], 'NOT_FOUND', 'No encontramos a esa persona del equipo.');
+  if (u.role !== 'ADMIN') fail('NOT_TEAM', 'Esa cuenta no es del equipo de Mesagri.');
+  return u;
+}
+
+/** La administración general agrega a una persona al equipo con su rol (el servidor le da una clave temporal). */
+on('STAFF_ADD', (c: Ctx) => {
+  const { w, t } = c;
+  requireAdmin(c.a, 'GENERAL');
+  const p = c.e.p ?? {};
+  const id = String(p.userId ?? '');
+  if (!/^u-[a-z0-9-]{3,60}$/.test(id) || w.users[id]) fail('BAD_ID', 'Identificador no válido.');
+  const name = String(p.name ?? '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  if (name.length < 5 || !name.includes(' ')) fail('BAD_NAME', 'Escribe el nombre y el apellido.');
+  const email = String(p.email ?? '').trim().toLowerCase();
+  if (!isEmail(email)) fail('BAD_EMAIL', 'Ese correo no parece correcto.');
+  if (Object.values(w.users).some(u => (u.email ?? '').toLowerCase() === email)) fail('EMAIL_TAKEN', 'Ese correo ya es de otra cuenta del equipo.');
+  const phone = String(p.phone ?? '').replace(/\s/g, '');
+  if (!isPhoneValid(phone)) fail('BAD_PHONE', 'El celular tiene 9 dígitos y empieza con 9.');
+  if (Object.values(w.users).some(u => u.phone === phone)) fail('PHONE_TAKEN', 'Ese celular ya tiene una cuenta en Mesagri.');
+  const role = String(p.adminRole ?? '') as User['adminRole'];
+  if (!ADMIN_ROLES.includes(role)) fail('BAD_ROLE', 'Elige el rol: administración general, verificación, soporte o analista.');
+  const org = w.orgs[c.a.orgId] ?? Object.values(w.orgs).find(o => o.type === 'MESAGRI');
+  if (!org) fail('NO_ORG', 'No encontramos la organización de Mesagri.');
+  w.users[id] = { id, name, shortName: name.split(' ')[0], phone, role: 'ADMIN', adminRole: role, orgId: org!.id, email, createdAt: t, prefs: defaultPrefs('es'), status: 'ACTIVE' };
+  if (!org!.memberIds.includes(id)) org!.memberIds.push(id);
+  audit(c, c.a.id, 'EQUIPO: NUEVA CUENTA', id, `${name} (${email}) · ${ADMIN_ROLE_INFO[role!].label}`);
+  return { userId: id };
+});
+
+/** Cambia el rol de una persona del equipo (siempre queda al menos una persona de administración general). */
+on('STAFF_ROLE_SET', (c: Ctx) => {
+  const { w } = c;
+  requireAdmin(c.a, 'GENERAL');
+  const u = teamMember(w, String(c.e.p?.userId ?? ''));
+  const role = String(c.e.p?.adminRole ?? '') as User['adminRole'];
+  if (!ADMIN_ROLES.includes(role)) fail('BAD_ROLE', 'Elige un rol válido.');
+  if (u.adminRole === role) fail('SAME', 'Ya tiene ese rol.');
+  if (u.adminRole === 'GENERAL' && u.status === 'ACTIVE' && activeGenerals(w).length <= 1) fail('LAST_GENERAL', 'Debe quedar al menos una persona de administración general.');
+  const before = u.adminRole ? ADMIN_ROLE_INFO[u.adminRole].label : '—';
+  u.adminRole = role;
+  audit(c, c.a.id, 'EQUIPO: ROL', u.id, `${u.name}: ${ADMIN_ROLE_INFO[role!].label}`, before, ADMIN_ROLE_INFO[role!].label);
+});
+
+/** Pausa o reactiva el acceso de una persona del equipo al panel. */
+on('STAFF_STATUS_SET', (c: Ctx) => {
+  const { w } = c;
+  requireAdmin(c.a, 'GENERAL');
+  const u = teamMember(w, String(c.e.p?.userId ?? ''));
+  const active = c.e.p?.active === true;
+  if (u.id === c.a.id && !active) fail('SELF', 'No puedes pausar tu propio acceso.');
+  if (!active && u.adminRole === 'GENERAL' && u.status === 'ACTIVE' && activeGenerals(w).length <= 1) fail('LAST_GENERAL', 'Debe quedar al menos una persona de administración general.');
+  const next = active ? 'ACTIVE' : 'SUSPENDED';
+  if (u.status === next) fail('SAME', active ? 'Ya tiene acceso.' : 'Su acceso ya está pausado.');
+  u.status = next;
+  audit(c, c.a.id, active ? 'EQUIPO: REACTIVAR' : 'EQUIPO: PAUSAR', u.id, `${u.name} · ${active ? 'vuelve a entrar al panel' : 'ya no entra al panel'}`);
+});
+
+/** Deja constancia de que se entregó una clave temporal nueva (la persona vuelve a activar su doble factor al entrar). */
+on('STAFF_ACCESS_RESET', (c: Ctx) => {
+  const { w } = c;
+  requireAdmin(c.a, 'GENERAL');
+  const u = teamMember(w, String(c.e.p?.userId ?? ''));
+  audit(c, c.a.id, 'EQUIPO: NUEVO ACCESO', u.id, `${u.name}: clave temporal nueva; activa otra vez su doble factor al entrar`);
+});
+
+/* ======================= Datos de cada persona ======================= */
+
+const NAME_RE = /^[\p{L}][\p{L}\s.'’-]*$/u;
+const cleanName = (s: unknown, max: number) => String(s ?? '').trim().replace(/\s+/g, ' ').slice(0, max);
+
+/**
+ * Cada persona elige cómo la llamamos (el saludo de la app y lo que ven sus contrapartes). El
+ * equipo de Mesagri además corrige su nombre, su correo para entrar al panel y su celular. En la
+ * app, el nombre completo es el del DNI (verificado) y el celular es con el que se entra: esos los
+ * corrige Soporte.
+ */
+on('PROFILE_SET', (c: Ctx) => {
+  const { w } = c;
+  const u = must(w.users[c.a.id], 'NO_USER', 'Primero inicia sesión.');
+  const p = c.e.p ?? {};
+  const team = u.role === 'ADMIN';
+  const changed: string[] = [];
+  if (p.shortName !== undefined) {
+    const s = cleanName(p.shortName, 40);
+    if (s.length < 2 || s.length > 30 || !NAME_RE.test(s)) fail('BAD_NAME', 'Escribe cómo quieres que te llamemos: de 2 a 30 letras.');
+    if (s !== u.shortName) { u.shortName = s; changed.push('cómo lo llamamos'); }
+  }
+  if (p.name !== undefined) {
+    if (!team) fail('NAME_LOCKED', 'Tu nombre completo es el de tu DNI. Si tiene un error, escríbele a Soporte.');
+    const n = cleanName(p.name, 90);
+    if (n.length < 2 || n.length > 80 || !NAME_RE.test(n)) fail('BAD_NAME', 'Escribe tu nombre: solo letras, hasta 80.');
+    if (n !== u.name) { u.name = n; changed.push('nombre'); }
+  }
+  if (p.email !== undefined) {
+    if (!team) fail('FORBIDDEN', 'El correo lo cambia el equipo de Mesagri.');
+    const e = String(p.email ?? '').trim().toLowerCase();
+    if (!isEmail(e)) fail('BAD_EMAIL', 'Ese correo no parece correcto.');
+    if (Object.values(w.users).some(x => x.id !== u.id && (x.email ?? '').toLowerCase() === e)) fail('EMAIL_TAKEN', 'Ese correo ya es de otra cuenta.');
+    if (e !== u.email) { u.email = e; changed.push('correo'); }
+  }
+  if (p.phone !== undefined) {
+    if (!team) fail('PHONE_LOCKED', 'Tu celular es con el que entras a Mesagri: para cambiarlo, escríbele a Soporte.');
+    const ph = String(p.phone ?? '').replace(/\s/g, '');
+    if (!isPhoneValid(ph)) fail('BAD_PHONE', 'El celular tiene 9 dígitos y empieza con 9.');
+    if (Object.values(w.users).some(x => x.id !== u.id && x.phone === ph)) fail('PHONE_TAKEN', 'Ese celular ya tiene una cuenta en Mesagri.');
+    if (ph !== u.phone) { u.phone = ph; changed.push('celular'); }
+  }
+  if (!changed.length) fail('SAME', 'No hay cambios que guardar.');
+  if (team) audit(c, u.id, 'EQUIPO: MIS DATOS', u.id, `${u.name}: cambió ${changed.join(', ')}`);
+  return { changed };
+});

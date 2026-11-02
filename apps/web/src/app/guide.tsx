@@ -56,7 +56,7 @@ const FLOWS: Flow[] = [
   {
     id: 'voz', title: 'Publicar con la voz', sub: 'Flujo 2 · la frase pasa sola a la confirmación (corrige D-04)',
     steps: [
-      { t: 'Wilber toca Publicar y dice (o escribe) una frase', dev: 'd1', user: 'u-wilber', s: 'A-10', done: w => newListing(w, 'org-wilber'), hint: 'Prueba «papitas amarillas, dos sacos, a dos setenta el kilo».' },
+      { t: 'Wilber toca Publicar y dice (o escribe) una frase', dev: 'd1', user: 'u-wilber', s: 'A-10', done: w => newListing(w, 'org-wilber'), hint: 'Prueba «papitas amarillas, dos sacos, a dos setenta el kilo» y agrega una foto de la cosecha.' },
     ],
   },
   {
@@ -102,7 +102,7 @@ const FLOWS: Flow[] = [
     id: 'cuentas', title: 'Estado de cuenta y cobranza', sub: 'RN-14, RN-40 · comisión de 3 % desde la 6.ª venta',
     steps: [
       { t: 'Wilber ve su estado de cuenta de octubre (S/ 41,40) y lo paga con Yape', dev: 'd1', user: 'u-wilber', s: 'A-26', done: w => w.statements['st-FARMER-org-wilber-2026-10']?.status !== 'ISSUED' },
-      { t: 'Carlos concilia el pago en el panel (W-14) y se emite la boleta', dev: 'web', user: 'u-carlos', s: 'W-14', done: w => w.statements['st-FARMER-org-wilber-2026-10']?.status === 'PAID' },
+      { t: 'Gaby concilia el pago en el panel (W-14) y se emite la boleta', dev: 'web', user: 'u-gaby', s: 'W-14', done: w => w.statements['st-FARMER-org-wilber-2026-10']?.status === 'PAID' },
     ],
   },
   {

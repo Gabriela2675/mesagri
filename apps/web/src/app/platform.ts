@@ -71,3 +71,37 @@ export function waitSmsCode(onCode: (code: string) => void): () => void {
     return () => ac.abort();
   } catch { return () => undefined; }
 }
+
+/* ---------------- Permisos del celular (APK) ---------------- */
+
+export type PermName = 'camera' | 'microphone' | 'location';
+/** granted: permitido · prompt: aún no se pidió · denied: se puede pedir otra vez · blocked: solo en los ajustes del celular */
+export type PermState = 'granted' | 'prompt' | 'denied' | 'blocked';
+interface PermBridge { permissions?(): string; askPermissions?(names: string): void; openSettings?(): void }
+const permBridge = (): PermBridge | undefined => { const b = android() as unknown as PermBridge | undefined; return b?.permissions ? b : undefined; };
+
+/** ¿El APK puede pedir permisos? (en el navegador, cada permiso lo pide el navegador cuando hace falta) */
+export const canAskPermissions = (): boolean => !!permBridge();
+
+export function permissionStates(): Partial<Record<PermName, PermState>> {
+  try { return JSON.parse(permBridge()?.permissions?.() ?? '{}'); } catch { return {}; }
+}
+
+/** Pide los permisos en un solo cuadro de Android y devuelve cómo quedaron. */
+export function askPermissions(names: PermName[]): Promise<Partial<Record<PermName, PermState>>> {
+  const b = permBridge();
+  if (!b?.askPermissions) return Promise.resolve({});
+  return new Promise(resolve => {
+    const w = window as any;
+    const timer = setTimeout(() => { w.__mesagriPermissions = undefined; resolve(permissionStates()); }, 120_000);
+    w.__mesagriPermissions = (json: string) => {
+      clearTimeout(timer);
+      w.__mesagriPermissions = undefined;
+      try { resolve(JSON.parse(json)); } catch { resolve(permissionStates()); }
+    };
+    try { b.askPermissions!(names.join(',')); } catch { clearTimeout(timer); resolve(permissionStates()); }
+  });
+}
+
+/** Ajustes de Mesagri en el celular (para un permiso que quedó bloqueado). */
+export function openAppSettings() { try { permBridge()?.openSettings?.(); } catch { /* sin puente */ } }
