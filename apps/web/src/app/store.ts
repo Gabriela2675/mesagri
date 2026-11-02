@@ -16,7 +16,7 @@ import { uid } from '@mesagri/shared/ids';
 import { registerProducts } from '@mesagri/shared/catalog';
 import { PROTOCOL } from '@mesagri/shared/protocol';
 import { applyPatch, type Patch } from '@mesagri/shared/patch';
-import { api, ApiError, API, isNetwork, Sessions, openSocket, teamHeaders, teamKey, saveDeviceKey, deviceKeyFor, type LiveSocket } from './net';
+import { api, ApiError, API, isNetwork, Sessions, openSocket, teamHeaders, teamKey, saveDeviceKey, deviceKeyFor, markStage, type LiveSocket } from './net';
 import { LOCAL } from './routes';
 import { lsGet, lsSet, lsDel } from './persist';
 
@@ -84,6 +84,7 @@ export class Store {
 
   constructor(readonly mode: Mode = 'stage') {
     this.sessions.allowDemo = mode === 'stage';
+    if (mode === 'stage') markStage();
   }
 
   subscribe(fn: Listener) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }

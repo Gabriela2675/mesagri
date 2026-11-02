@@ -6,7 +6,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import crypto from 'node:crypto';
-import { isPhoneValid, uid, seedSets } from '@mesagri/shared';
+import { isPhoneValid, uid, seedSets, maskPhone } from '@mesagri/shared';
 import type { User } from '@mesagri/shared';
 import { CONFIG } from '../config';
 import { exec, rows } from '../db/db';
@@ -15,6 +15,8 @@ import { EngineService } from '../core/engine.service';
 import { DomainHttpError, ruleError } from '../common/errors';
 import { RateLimiter } from '../common/rate-limit';
 import { hashPassword, otpCode, totp, verifyPassword, verifyTotp } from './secrets';
+import { WhatsAppService, WhatsAppError } from './whatsapp';
+import { teamOk } from '../common/team';
 
 const ROLE_NAME: Record<string, string> = { FARMER: 'agricultor', BUYER: 'comprador (MYPE)', WAREHOUSE: 'almacén aliado', CARRIER: 'transportista aliado', ADMIN: 'equipo de Mesagri' };
 
@@ -30,7 +32,7 @@ export class AuthService implements OnModuleInit {
   private readonly log = new Logger('Autenticación');
   private readonly limiter = new RateLimiter();
 
-  constructor(private readonly engine: EngineService, private readonly jwt: JwtService) {
+  constructor(private readonly engine: EngineService, private readonly jwt: JwtService, private readonly wa: WhatsAppService) {
     engine.seedHooks.push(() => this.ensureTeamCredentials());
     // al reiniciar la demo se empieza de cero también con los límites de intentos
     engine.bus.on('reset', () => this.limiter.clear());
@@ -104,7 +106,28 @@ export class AuthService implements OnModuleInit {
     return !Number(n?.n ?? 0);
   }
 
-  async requestOtp(phoneRaw: string, purpose: OtpPurpose, ip: string, deviceKey?: string) {
+  /** Guarda un código nuevo (solo su huella) y lo devuelve para mandarlo o mostrarlo. */
+  private async issueCode(phone: string, purpose: OtpPurpose): Promise<string> {
+    const code = otpCode();
+    await exec(this.engine.pool, 'INSERT INTO otp_codes (phone_e164, purpose, code_hash, expires_at) VALUES (?, ?, ?, ?)', ['+51' + phone, purpose, sha256(`${phone}:${purpose}:${code}`), new Date(Date.now() + OTP_TTL)]);
+    return code;
+  }
+
+  /** Pedidos de código de cuentas de prueba hechos desde el celular de quien presenta (por WhatsApp). */
+  private readonly demoAsks = new Map<string, { phone: string; purpose: OtpPurpose; until: number }>();
+
+  /**
+   * Pide un código de 6 dígitos.
+   * - Con WhatsApp en modo «responder» (sin costo): no se manda nada todavía. La app abre WhatsApp
+   *   con el mensaje listo para el número de Mesagri; cuando la persona lo envía, Meta avisa al
+   *   webhook y se le responde con el código (answerWhatsApp). Como el mensaje sale de su propio
+   *   WhatsApp, prueba que el número es suyo.
+   * - Con WhatsApp en modo «plantilla»: Mesagri le escribe primero con el código (Meta lo cobra).
+   * - Cuentas de ejemplo (públicas): el código se muestra en pantalla. Quien presenta (con la clave
+   *   del equipo) lo pide por WhatsApp, como sería con una cuenta real.
+   * - Sin WhatsApp: en la versión de prueba, en pantalla (con las reglas de los celulares de confianza).
+   */
+  async requestOtp(phoneRaw: string, purpose: OtpPurpose, ip: string, deviceKey?: string, teamKey?: string, stage = false) {
     const phone = String(phoneRaw ?? '').replace(/\s/g, '');
     if (!isPhoneValid(phone)) throw new DomainHttpError(422, 'BAD_PHONE', 'Ese número no parece correcto (9 dígitos, empieza con 9).');
     if (!['REGISTER', 'LOGIN', 'RECOVER'].includes(purpose)) throw new DomainHttpError(422, 'BAD_PURPOSE', 'Motivo no válido.');
@@ -114,11 +137,103 @@ export class AuthService implements OnModuleInit {
     if (purpose === 'REGISTER' && u) throw new DomainHttpError(409, 'PHONE_TAKEN', 'Ese celular ya tiene una cuenta. Ingresa con «Ya tengo cuenta».');
     // Las cuentas del equipo también reciben el código: al verificarlo, la app las lleva al panel web
     if (purpose !== 'REGISTER' && !u) throw new DomainHttpError(404, 'NO_ACCOUNT', 'No hay una cuenta con ese celular. Regístrate gratis.');
-    const code = otpCode();
-    await exec(this.engine.pool, 'INSERT INTO otp_codes (phone_e164, purpose, code_hash, expires_at) VALUES (?, ?, ?, ?)', ['+51' + phone, purpose, sha256(`${phone}:${purpose}:${code}`), new Date(Date.now() + OTP_TTL)]);
-    // En el piloto el código sale por WhatsApp o SMS; en la demo no hay proveedor y se muestra en pantalla.
+    const base = { expiresIn: OTP_TTL / 1000 };
+    const wa = CONFIG.whatsapp;
+    const presenter = teamKey !== undefined && teamOk(teamKey) && (!!teamKey || !CONFIG.teamKey);
+    // escenario de la demo (celulares simulados en una pantalla, solo el equipo): código en pantalla
+    if (CONFIG.demo && stage && presenter) {
+      const code = await this.issueCode(phone, purpose);
+      return { ...base, sent: true, channel: 'PANTALLA', demoCode: code, demoAccount: !!u && seedSets().users.has(u.id) };
+    }
+
+    if (u && seedSets().users.has(u.id)) {
+      // cuenta de ejemplo: quien presenta la pide por WhatsApp, como sería de verdad
+      if (CONFIG.demo && presenter && this.wa.responder) {
+        let ask = '';
+        do { ask = Array.from({ length: 4 }, () => 'ACDEFHJKMNPRTUVWXY'[crypto.randomInt(0, 18)]).join(''); } while (this.demoAsks.has(ask));
+        for (const [k, v] of this.demoAsks) if (v.until < Date.now()) this.demoAsks.delete(k);
+        this.demoAsks.set(ask, { phone, purpose, until: Date.now() + 10 * 60_000 });
+        const link = await this.wa.link(`Hola Mesagri, quiero el código de la cuenta de prueba ${ask}`);
+        if (link) return { ...base, sent: false, channel: 'WHATSAPP_IN', wa: link, demoAccount: true };
+      }
+      if (CONFIG.demo && presenter && this.wa.configured && !this.wa.responder && wa.demoTo.length) {
+        const code = await this.issueCode(phone, purpose);
+        try {
+          for (const to of wa.demoTo) await this.wa.sendCode(to, code);
+          return { ...base, sent: true, channel: 'WHATSAPP', to: maskPhone(wa.demoTo[0].slice(-9)), demoAccount: true };
+        } catch (e) {
+          return { ...base, sent: false, channel: 'PANTALLA', demoCode: code, demoAccount: true, notice: (e as WhatsAppError).userMessage ?? 'No pudimos enviar el WhatsApp.' };
+        }
+      }
+      const code = await this.issueCode(phone, purpose);
+      return { ...base, sent: CONFIG.demo, channel: 'PANTALLA', demoCode: CONFIG.demo ? code : undefined, demoAccount: true };
+    }
+
+    if (this.wa.responder) {
+      const link = await this.wa.link(purpose === 'REGISTER' ? 'Hola Mesagri, quiero mi código para crear mi cuenta' : 'Hola Mesagri, quiero mi código para ingresar');
+      if (link) return { ...base, sent: false, channel: 'WHATSAPP_IN', wa: link };
+      this.log.warn('WhatsApp sin número de Mesagri: el código se muestra en pantalla');
+    } else if (this.wa.configured) {
+      this.guard('wa:' + phone, CONFIG.demo ? 8 : 5, 15 * 60_000);
+      this.guard('wa-ip:' + ip, CONFIG.demo ? 60 : 30, 15 * 60_000);
+      const code = await this.issueCode(phone, purpose);
+      try {
+        await this.wa.sendCode('51' + phone, code);
+        return { ...base, sent: true, channel: 'WHATSAPP', to: maskPhone(phone) };
+      } catch (e) {
+        const why = e instanceof WhatsAppError ? e.userMessage : 'No pudimos enviar el WhatsApp.';
+        // versión de prueba: para registrarse o en el celular de la persona, el código en pantalla
+        if (CONFIG.demo && (await this.showCode(u, purpose, deviceKey))) return { ...base, sent: false, channel: 'PANTALLA', demoCode: code, notice: why };
+        throw new DomainHttpError(502, 'WHATSAPP', why);
+      }
+    }
+    // Sin proveedor de mensajes: en la versión de prueba el código se muestra en pantalla.
     const show = await this.showCode(u, purpose, deviceKey);
-    return { sent: true, channel: 'WHATSAPP', expiresIn: OTP_TTL / 1000, demoCode: show ? code : undefined, ...(CONFIG.demo && !show ? { deviceOnly: true } : {}) };
+    const code = show ? await this.issueCode(phone, purpose) : undefined;
+    return { ...base, sent: show, channel: 'PANTALLA', demoCode: code, ...(CONFIG.demo && !show ? { deviceOnly: true } : {}) };
+  }
+
+  /**
+   * Alguien le escribió a Mesagri por WhatsApp: se le responde con su código. El número del que
+   * escribe es el de su cuenta (o el de la cuenta que va a crear). Si el mensaje trae la clave de
+   * un pedido de cuenta de prueba (quien presenta), el código es de esa cuenta de prueba.
+   */
+  async answerWhatsApp(m: { from: string; text: string }): Promise<void> {
+    const from = String(m.from ?? '').replace(/\D/g, '');
+    if (!from) return;
+    const reply = (t: string) => this.wa.sendText(from, t);
+    try {
+      this.guard('wa-in:' + from, 8, 15 * 60_000);
+    } catch {
+      await reply('Pediste muchos códigos seguidos. Espera unos minutos y vuelve a intentar.');
+      return;
+    }
+    const ask = [...String(m.text ?? '').toUpperCase().matchAll(/\b[A-Z]{4}\b/g)].map(x => x[0]).find(k => this.demoAsks.has(k));
+    if (ask) {
+      const d = this.demoAsks.get(ask)!;
+      this.demoAsks.delete(ask);
+      if (d.until >= Date.now()) {
+        const code = await this.issueCode(d.phone, d.purpose);
+        const who = this.userByPhone(d.phone);
+        await reply(`Código de la cuenta de prueba de ${who?.name ?? 'Mesagri'}: *${code}*\n\nEscríbelo en la app. Vence en 5 minutos.`);
+        return;
+      }
+    }
+    if (!/^51\d{9}$/.test(from)) {
+      await reply('Hola. Por ahora Mesagri funciona con celulares de Perú (+51).');
+      return;
+    }
+    const phone = from.slice(2);
+    if (!isPhoneValid(phone)) { await reply('Hola. Para usar Mesagri necesitas un celular de Perú.'); return; }
+    const u = this.userByPhone(phone);
+    if (u?.role === 'ADMIN') {
+      await reply('Tu cuenta es del equipo de Mesagri: entra por el panel web con tu correo, tu contraseña y el código de tu app de autenticación.');
+      return;
+    }
+    const purpose: OtpPurpose = u ? 'LOGIN' : 'REGISTER';
+    const code = await this.issueCode(phone, purpose);
+    const fmt = `${phone.slice(0, 3)} ${phone.slice(3, 6)} ${phone.slice(6)}`;
+    await reply(`Tu código de Mesagri es: *${code}*\n\nEscríbelo en la app para ${u ? 'ingresar' : 'crear tu cuenta'} con el celular ${fmt}. Vence en 5 minutos.\nNo se lo compartas a nadie: Mesagri nunca te lo pide.`);
   }
 
   async verifyOtp(phoneRaw: string, purpose: OtpPurpose, code: string, opts: { consume?: boolean } = {}) {

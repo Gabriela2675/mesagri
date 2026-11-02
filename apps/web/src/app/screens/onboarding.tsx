@@ -87,7 +87,7 @@ function DemoNote() {
   const A = useApp();
   if (!LOCAL) return (
     <p className="cap center" style={{ margin: ".4em 0 0", color: "#cfe0c1" }}>
-      Versión de prueba en línea: lo que hagas lo ven las demás personas según su cuenta, como en la app de verdad. Usa datos de ejemplo: no pongas tu DNI ni tu dirección reales.
+      Versión de prueba en línea: lo que hagas lo ven las demás personas según su cuenta, como en la app de verdad. Los pedidos y pagos son de prueba: para el DNI y la dirección usa datos de ejemplo.
     </p>
   );
   const reset = async () => {
@@ -103,6 +103,26 @@ function DemoNote() {
       <button className="linkbtn" style={{ color: "#E7F0DC", padding: 0, minHeight: 0, display: 'inline' }} onClick={reset}>Volver a los datos de ejemplo</button>
       {cloud && <>{' · '}<button className="linkbtn" style={{ color: "#E7F0DC", padding: 0, minHeight: 0, display: 'inline' }} onClick={() => bridge.goOnline()}>Usar la versión en línea</button></>}
     </p>
+  );
+}
+
+/**
+ * Pedir el código por WhatsApp: se abre WhatsApp con el mensaje listo para el número de Mesagri;
+ * al enviarlo, Mesagri responde al instante con el código (sin costo para nadie).
+ */
+export function WhatsAppAsk({ wa, dark, demo }: { wa: { link: string; number: string }; dark?: boolean; demo?: boolean }) {
+  const open = () => { try { window.open(wa.link, '_blank', 'noopener'); } catch { location.href = wa.link; } };
+  return (
+    <div className="card" style={dark ? { background: "rgba(255,255,255,.1)", color: "#fff", boxShadow: "none" } : undefined} role="region" aria-label="Pedir el código por WhatsApp">
+      <div className="row top g8">
+        <Icon n="message-circle" s="1.5em" />
+        <div className="grow">
+          <b>{demo ? 'Pide el código de la cuenta de prueba por WhatsApp' : 'Pide tu código por WhatsApp'}</b>
+          <div className={dark ? 'cap' : 'cap'} style={dark ? { color: "#E7F0DC" } : undefined}>Toca el botón: se abre WhatsApp con el mensaje listo para Mesagri ({wa.number}). Envíalo y te respondemos al instante con el código de 6 dígitos. Luego escríbelo aquí.</div>
+        </div>
+      </div>
+      <div className="mt"><Btn full icon="message-circle" onClick={open}>Abrir WhatsApp</Btn></div>
+    </div>
   );
 }
 
@@ -250,17 +270,22 @@ function PhoneLogin({ role }: { role: string }) {
   const [err, setErr] = useState<{ text: string; role?: string; email?: string; panel?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [list, setList] = useState(false);
+  const [wa, setWa] = useState<{ link: string; number: string; demo?: boolean } | undefined>();
   const p = phone.replace(/\s/g, '');
   const ask = async (ph: string) => {
     if (!isPhoneValid(ph)) { setErr({ text: 'Ese número no parece correcto: son 9 dígitos y empieza con 9.' }); return; }
-    setErr(null); setBusy(true);
+    setErr(null); setBusy(true); setWa(undefined);
     try {
       const r = await auth.otp(ph, 'LOGIN');
-      // cuenta de una persona real y este no es su celular: sin proveedor de SMS, el código no se muestra aquí
+      // cuenta de una persona real y este no es su celular: sin proveedor de mensajes, el código no se muestra aquí
       if (r.deviceOnly) { setErr({ text: 'Por seguridad, en esta versión de prueba el código solo aparece en el celular donde se creó esta cuenta. Si cambiaste de celular, pide al equipo de Mesagri que restablezca tu acceso (o crea una cuenta nueva).' }); return; }
-      // Como en un celular que lee el SMS solo: el código se completa. Sin proveedor de mensajes, se muestra aquí.
+      // se pide escribiendo a Mesagri por WhatsApp: la respuesta trae el código
+      if (r.channel === 'WHATSAPP_IN' && r.wa) { setWa({ ...r.wa, demo: r.demoAccount }); setCode(''); return; }
+      // Como en un celular que lee el mensaje solo: el código se completa. En la versión de prueba, se muestra aquí.
       if (r.demoCode) setCode(r.demoCode);
-      A.toast(r.demoCode ? `Mensaje de Mesagri: tu código de acceso es ${r.demoCode}. (Versión de prueba: sin proveedor de SMS, lo mostramos aquí.)` : 'Te enviamos un código por WhatsApp.', 'info');
+      A.toast(r.demoCode
+        ? (r.notice ? `${r.notice} Por ser versión de prueba, tu código es ${r.demoCode}.` : r.demoAccount ? `Cuenta de prueba: tu código es ${r.demoCode}. Con una cuenta real llega por WhatsApp.` : `Versión de prueba: tu código es ${r.demoCode}.`)
+        : r.channel === 'WHATSAPP' ? `Te enviamos un código por WhatsApp al ${r.to ?? 'celular'}.` : 'Te enviamos un código.', 'info');
     } catch (e: any) { setErr({ text: e.message }); } finally { setBusy(false); }
   };
   const enter = async (as?: string) => {
@@ -297,7 +322,8 @@ function PhoneLogin({ role }: { role: string }) {
         </div>
         <p className="bodym" style={{ margin: ".2em 0 0", color: "#E7F0DC" }}>Ingresa con tu número de celular. Te mandamos un código de 6 dígitos.</p>
         <Inp value={phone} onInput={(v) => { setPhone(v); setErr(null); }} mode="tel" prefix="+51" placeholder="987 654 321" label="Número de celular" autoFocus />
-        <Inp value={code} onInput={(v) => { setCode(v.replace(/\D/g, '').slice(0, 6)); setErr(null); }} mode="numeric" placeholder="Código de 6 dígitos" label="Código de acceso" max={6} suffix={<span style={{ pointerEvents: "auto" }}><button className="linkbtn" style={{ color: "var(--field)", padding: "0", minHeight: "0" }} onClick={() => ask(p)} disabled={busy}>{code ? 'Reenviar' : 'Pedir código'}</button></span>} />
+        <Inp value={code} onInput={(v) => { setCode(v.replace(/\D/g, '').slice(0, 6)); setErr(null); }} mode="numeric" placeholder="Código de 6 dígitos" label="Código de acceso" max={6} suffix={<span style={{ pointerEvents: "auto" }}><button className="linkbtn" style={{ color: "var(--field)", padding: "0", minHeight: "0" }} onClick={() => ask(p)} disabled={busy}>{code || wa ? 'Reenviar' : 'Pedir código'}</button></span>} />
+        {wa && <WhatsAppAsk wa={wa} dark demo={wa.demo} />}
         {err && (
           <div className="card danger" role="alert">
             <div className="bodym">{err.text}</div>
@@ -373,8 +399,9 @@ function Phone() {
     setBusy(true);
     try {
       const r = await auth.otp(p, 'REGISTER');
-      regSet(A, { phone: p, otpAt: Date.now(), demoCode: r.demoCode });
-      A.toast(r.demoCode ? `Mensaje de Mesagri por WhatsApp: tu código es ${r.demoCode} (demo: sin proveedor de mensajes, te lo mostramos aquí).` : 'Te enviamos un código por WhatsApp.', 'info');
+      const wa = r.channel === 'WHATSAPP_IN' ? r.wa : undefined;
+      regSet(A, { phone: p, otpAt: Date.now(), demoCode: r.demoCode, wa });
+      if (!wa) A.toast(r.demoCode ? (r.notice ? `${r.notice} Por ser versión de prueba, tu código es ${r.demoCode}.` : `Versión de prueba: tu código es ${r.demoCode}.`) : `Te enviamos un código por WhatsApp${r.to ? ` al ${r.to}` : ''}.`, 'info');
       A.go('A-03');
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
@@ -441,15 +468,17 @@ function Otp() {
     setLeft(60);
     try {
       const r = await auth.otp(R.phone ?? '', 'REGISTER');
-      regSet(A, { demoCode: r.demoCode });
-      A.toast(r.demoCode ? `Tu código es ${r.demoCode} (demo).` : 'Te enviamos otro código.', 'info');
+      regSet(A, { demoCode: r.demoCode, wa: r.channel === 'WHATSAPP_IN' ? r.wa : undefined });
+      if (r.channel === 'WHATSAPP_IN' && r.wa) { try { window.open(r.wa.link, '_blank', 'noopener'); } catch { /* sin ventana */ } return; }
+      A.toast(r.demoCode ? `Tu código es ${r.demoCode} (versión de prueba).` : 'Te enviamos otro código.', 'info');
     } catch (e: any) { setErr(e.message); }
   };
   return (
     <Screen title={A.t('otp.title', 'Verifica tu número')} foot={<Btn full onClick={verify} disabled={code.length < 6 || busy}>{busy ? <i className="spin" /> : null}{A.t('otp.verify', 'Verificar')}</Btn>}>
       <div className="stack">
-        <div><div className="cap">Enviamos un código a</div><div className="h3">+51 {fmtPhone(R.phone ?? '')}</div></div>
-        <CodeInput value={code} onChange={(v) => { setCode(v); setErr(''); }} n={6} err={!!err} autoFocus />
+        <div><div className="cap">{R.wa ? 'Tu celular' : 'Enviamos un código a'}</div><div className="h3">+51 {fmtPhone(R.phone ?? '')}</div></div>
+        {R.wa && <WhatsAppAsk wa={R.wa} />}
+        <CodeInput value={code} onChange={(v) => { setCode(v); setErr(''); }} n={6} err={!!err} autoFocus={!R.wa} />
         {err && <div className="errt"><Icon n="circle-alert" s="1.2em" />{err}</div>}
         <div className="row between cap"><span>{left > 0 ? 'Puedes reenviar el código en' : '¿No te llegó?'}</span>{left > 0 ? <b className="price">00:{String(left).padStart(2, '0')}</b> : <button className="linkbtn" onClick={resend}>Reenviar código</button>}</div>
         {R.demoCode && <button className="linkbtn" style={{ alignSelf: "flex-start", fontSize: ".85em" }} onClick={() => setCode(R.demoCode)}>Usar el código del mensaje (demo)</button>}

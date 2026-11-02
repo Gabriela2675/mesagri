@@ -11,6 +11,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import nodeHttp from 'node:http';
+import crypto from 'node:crypto';
 
 const DB = 'mesagri_test_api';
 let app: INestApplication;
@@ -283,6 +285,118 @@ describe('API de Mesagri', () => {
       expect(reset.body.devicesForgotten).toBeGreaterThan(0);
       expect((await api().post('/api/v1/auth/otp').send({ phone, purpose: 'LOGIN' })).body.demoCode).toMatch(/^\d{6}$/);
     });
+  });
+
+  describe('código por WhatsApp sin costo: la persona escribe y Mesagri responde', () => {
+    let CONFIG: any;
+    let meta: nodeHttp.Server;
+    const sent: { to: string; body: string }[] = [];
+    const KEY = 'clave-del-equipo-de-prueba';
+    const SECRET = 'secreto-de-la-app-de-meta';
+    const saved: any = {};
+    beforeAll(async () => {
+      CONFIG = createRequire(path.resolve(process.cwd(), 'package.json'))('./dist/config.js').CONFIG;
+      // un «Meta» de mentira: guarda lo que el servidor manda
+      meta = nodeHttp.createServer((req, res) => {
+        let raw = '';
+        req.on('data', d => { raw += d; });
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json');
+          if (req.method === 'GET' && /\/v25\.0\/PHONE123\?/.test(req.url ?? '')) { res.end(JSON.stringify({ display_phone_number: '+51 900 000 001', verified_name: 'Mesagri' })); return; }
+          if (req.method === 'POST' && req.url === '/v25.0/PHONE123/messages') {
+            const b = JSON.parse(raw);
+            sent.push({ to: b.to, body: b.text?.body ?? '' });
+            res.end(JSON.stringify({ messaging_product: 'whatsapp', messages: [{ id: 'wamid.' + sent.length }] }));
+            return;
+          }
+          res.statusCode = 404; res.end(JSON.stringify({ error: { code: 100, message: 'no' } }));
+        });
+      });
+      await new Promise<void>(r => meta.listen(0, '127.0.0.1', () => r()));
+      Object.assign(saved, CONFIG.whatsapp, { teamKey: CONFIG.teamKey });
+      CONFIG.teamKey = KEY;
+      Object.assign(CONFIG.whatsapp, { token: 'token-de-prueba', phoneId: 'PHONE123', mode: 'responder', number: '', verifyToken: 'verifica-mesagri', appSecret: SECRET, apiBase: `http://127.0.0.1:${(meta.address() as AddressInfo).port}` });
+    });
+    afterAll(async () => {
+      const { teamKey, ...wa } = saved;
+      Object.assign(CONFIG.whatsapp, wa);
+      CONFIG.teamKey = teamKey;
+      await new Promise(r => meta.close(r));
+    });
+    const hook = (from: string, text: string, id: string, secret = SECRET) => {
+      const body = JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: 'WABA', changes: [{ field: 'messages', value: { messaging_product: 'whatsapp', metadata: { phone_number_id: 'PHONE123' }, contacts: [{ wa_id: from, profile: { name: 'Prueba' } }], messages: [{ id, from, timestamp: '1', type: 'text', text: { body: text } }] } }] }] });
+      const sig = 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex');
+      return api().post('/api/v1/whatsapp/webhook').set('Content-Type', 'application/json').set('X-Hub-Signature-256', sig).send(body);
+    };
+    const waitFor = async <T,>(fn: () => T | undefined, ms = 3000): Promise<T> => {
+      const t0 = Date.now();
+      for (;;) { const v = fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('no llegó'); await new Promise(r => setTimeout(r, 50)); }
+    };
+
+    it('Meta conecta el webhook solo con la clave', async () => {
+      const ok = await api().get('/api/v1/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=verifica-mesagri&hub.challenge=12345');
+      expect(ok.status).toBe(200);
+      expect(ok.text).toBe('12345');
+      expect((await api().get('/api/v1/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=otra&hub.challenge=1')).status).toBe(403);
+      const st = (await api().get('/api/v1/demo/status')).body.whatsapp;
+      expect(st.configured).toBe(true);
+    });
+
+    it('registro: la app abre WhatsApp, la persona escribe y le llega su código; con él crea su cuenta', async () => {
+      const phone = '944000111';
+      const r = await api().post('/api/v1/auth/otp').send({ phone, purpose: 'REGISTER' });
+      expect(r.status).toBe(200);
+      expect(r.body.channel).toBe('WHATSAPP_IN');
+      expect(r.body.demoCode).toBeUndefined();
+      expect(r.body.wa.number).toBe('+51900000001');
+      expect(r.body.wa.link).toMatch(/^https:\/\/wa\.me\/51900000001\?text=Hola%20Mesagri/);
+      // un aviso sin la firma de Meta no hace nada
+      await hook('51' + phone, 'Hola Mesagri, quiero mi código', 'wamid.falso', 'otra-clave');
+      await new Promise(res => setTimeout(res, 200));
+      expect(sent.filter(m => m.to === '51' + phone)).toEqual([]);
+      // el mensaje de la persona (Meta lo puede mandar dos veces): una sola respuesta
+      expect((await hook('51' + phone, 'Hola Mesagri, quiero mi código para crear mi cuenta', 'wamid.in.1')).status).toBe(200);
+      await hook('51' + phone, 'Hola Mesagri, quiero mi código para crear mi cuenta', 'wamid.in.1');
+      const msg = await waitFor(() => sent.find(m => m.to === '51' + phone));
+      await new Promise(res => setTimeout(res, 150));
+      expect(sent.filter(m => m.to === '51' + phone).length).toBe(1);
+      expect(msg.body).toMatch(/crear tu cuenta con el celular 944 000 111/);
+      const code = /\*(\d{6})\*/.exec(msg.body)![1];
+      const v = await api().post('/api/v1/auth/otp/verify').send({ phone, code });
+      expect(v.status).toBe(200);
+      const reg = await api().post('/api/v1/auth/register').send({ ticket: v.body.ticket, event: { id: 'e-reg-wa-1', p: { userId: 'u-wa-1', orgId: 'org-wa-1', role: 'FARMER', phone, name: 'Agricultora por WhatsApp', lang: 'es', org: { district: '040519' } } } });
+      expect(reg.status).toBe(201);
+      // otra vez: ahora es para ingresar, y el código sirve en «Ya tengo cuenta»
+      expect((await api().post('/api/v1/auth/otp').send({ phone, purpose: 'LOGIN' })).body.channel).toBe('WHATSAPP_IN');
+      await hook('51' + phone, 'quiero mi código', 'wamid.in.2');
+      const again = await waitFor(() => sent.filter(m => m.to === '51' + phone)[1]);
+      expect(again.body).toMatch(/para ingresar/);
+      const login = await api().post('/api/v1/auth/login').send({ phone, code: /\*(\d{6})\*/.exec(again.body)![1], role: 'FARMER' });
+      expect(login.status).toBe(200);
+      expect(login.body.userId).toBe('u-wa-1');
+    });
+
+    it('cuentas de prueba: en pantalla para todos; quien presenta la pide por WhatsApp desde su celular', async () => {
+      const pub = await api().post('/api/v1/auth/otp').send({ phone: '987654321', purpose: 'LOGIN' });
+      expect(pub.body.channel).toBe('PANTALLA');
+      expect(pub.body.demoCode).toMatch(/^\d{6}$/);
+      const pres = await api().post('/api/v1/auth/otp').set('x-team-key', KEY).send({ phone: '987654321', purpose: 'LOGIN' });
+      expect(pres.body.channel).toBe('WHATSAPP_IN');
+      expect(pres.body.demoAccount).toBe(true);
+      const ask = /prueba%20([A-Z]{4})/.exec(pres.body.wa.link)![1];
+      await hook('51955555555', `Hola Mesagri, quiero el código de la cuenta de prueba ${ask}`, 'wamid.demo.1');
+      const msg = await waitFor(() => sent.find(m => m.to === '51955555555'));
+      expect(msg.body).toMatch(/cuenta de prueba de Wilber/);
+      const login = await api().post('/api/v1/auth/login').send({ phone: '987654321', code: /\*(\d{6})\*/.exec(msg.body)![1], role: 'FARMER' });
+      expect(login.status).toBe(200);
+      expect(login.body.userId).toBe('u-wilber');
+    });
+  });
+
+  it('política de privacidad publicada (la pide Meta)', async () => {
+    const r = await api().get('/privacidad');
+    expect(r.status).toBe(200);
+    expect(r.text).toMatch(/Política de privacidad de Mesagri/);
   });
 
   it('reiniciar la demo cambia la época y deja sin efecto los tokens anteriores', async () => {

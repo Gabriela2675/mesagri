@@ -47,3 +47,13 @@ services:
         value: db
       - key: DB_POOL
         value: "6"
+      # Código de ingreso por WhatsApp (opcional; ver LEEME → «Código por WhatsApp»). Sin ellos,
+      # en la versión de prueba el código se muestra en pantalla.
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_ID
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false

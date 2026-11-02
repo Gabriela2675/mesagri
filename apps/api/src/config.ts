@@ -82,6 +82,34 @@ export const CONFIG = {
   teamKey: env('TEAM_KEY', '')!.trim(),
   /** Fotos y documentos: en la base de datos (sirve en la nube, donde el disco se borra) o en una carpeta. */
   filesInDb: (env('FILES_STORAGE', 'db') ?? 'db').toLowerCase() !== 'disk',
+  /**
+   * WhatsApp Business (API de Meta) para el código de ingreso. Con token e identificador del número:
+   * - responder (lo normal, sin costo hasta 1 000 respuestas al mes por número): la persona escribe
+   *   primero a Mesagri por WhatsApp (la app abre el mensaje listo) y Mesagri le responde con el código.
+   * - plantilla: Mesagri escribe primero con una plantilla de autenticación (Meta cobra cada una).
+   * Sin token, en la versión de prueba el código se muestra en pantalla.
+   */
+  whatsapp: {
+    token: (env('WHATSAPP_TOKEN', '') ?? '').trim(),
+    phoneId: (env('WHATSAPP_PHONE_ID', '') ?? '').trim(),
+    mode: ((env('WHATSAPP_MODE', 'responder') ?? 'responder').trim().toLowerCase() === 'plantilla' ? 'plantilla' : 'responder') as 'responder' | 'plantilla',
+    /** número de WhatsApp de Mesagri con código de país (51987654321); si falta, se lee de Meta */
+    number: (env('WHATSAPP_NUMBER', '') ?? '').replace(/\D/g, ''),
+    /** clave que se escribe en Meta al configurar el webhook (Configuration → Callback URL) */
+    verifyToken: (env('WHATSAPP_VERIFY_TOKEN', '') ?? '').trim(),
+    /** «App secret» de la app de Meta: comprueba que los mensajes que llegan son de Meta */
+    appSecret: (env('WHATSAPP_APP_SECRET', '') ?? '').trim(),
+    /** cuenta de WhatsApp Business: con ella el servidor crea solo la plantilla del código */
+    wabaId: (env('WHATSAPP_WABA_ID', '') ?? '').trim(),
+    template: (env('WHATSAPP_TEMPLATE', 'codigo_mesagri') ?? 'codigo_mesagri').trim(),
+    lang: (env('WHATSAPP_LANG', 'es') ?? 'es').trim(),
+    apiVersion: (env('WHATSAPP_API_VERSION', 'v25.0') ?? 'v25.0').trim(),
+    apiBase: (env('WHATSAPP_API_BASE', 'https://graph.facebook.com') ?? '').replace(/\/+$/, ''),
+    /** celulares del equipo que presenta: les llega el código de las cuentas de prueba */
+    demoTo: (env('DEMO_WHATSAPP_TO', '') ?? '').split(/[,;\s]+/).map(x => x.replace(/\D/g, '')).filter(x => x.length >= 9).map(x => (x.length === 9 ? '51' + x : x)),
+    /** tope de mensajes por día (cada código de autenticación tiene costo) */
+    dailyMax: num('WHATSAPP_DAILY_MAX', 500),
+  },
   /** Firma de los tokens de acceso (JWT HS256, 15 minutos). */
   jwtSecret: env('JWT_SECRET', 'mesagri-desarrollo-cambiar-en-produccion')!,
   accessTtlSeconds: num('ACCESS_TTL_SECONDS', 15 * 60),

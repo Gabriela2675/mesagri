@@ -58,9 +58,14 @@ chacra (GPS), fotos con la cámara y lectura del QR desde la foto.
   comprobarlos: el celular del agricultor comprueba el código que le dicta el comprador, pero no
   puede leerlo. Las personas de ejemplo son públicas a propósito (se entra con ellas desde
   **Ver cuentas de prueba**).
-- **Ingreso**: no hay proveedor de SMS, así que el código se muestra en pantalla. En las cuentas
-  reales, solo en el celular donde se creó la cuenta (o donde ya se ingresó); si alguien cambió de
-  celular, el equipo usa **Restablecer acceso** en el panel.
+- **Ingreso con código por WhatsApp** (cuando está configurado, ver abajo): la persona escribe su
+  celular, toca **Abrir WhatsApp**, envía el mensaje que aparece listo para el número de Mesagri y
+  le llega al instante su código de 6 dígitos. Como el mensaje sale de su propio WhatsApp, prueba
+  que el número es suyo. Las **cuentas de prueba** siguen mostrando su código en pantalla (para
+  presentar la app sin usuarios); en el celular de quien presenta (con la clave del equipo
+  guardada) también se piden por WhatsApp, como sería de verdad. Sin WhatsApp configurado, el
+  código se muestra en pantalla (en cuentas reales, solo en el celular donde se creó la cuenta; si
+  alguien cambió de celular, el equipo usa **Restablecer acceso** en el panel).
 - **Clave del equipo** (`TEAM_KEY`): la genera Render. Se ve en Render → servicio **mesagri** →
   **Environment**. Sirve para entrar a `/demo`, ver las cuentas de prueba del panel (con su
   contraseña y el código vigente del doble factor), adelantar el reloj y reiniciar los datos de
@@ -70,6 +75,36 @@ chacra (GPS), fotos con la cámara y lectura del QR desde la foto.
   si pasa mucho tiempo sin uso: se vuelve a encender en Aiven → servicio → **Power on**.
 - **Actualizar**: cada cambio que se sube a la rama `main` de GitHub se publica solo (Render vuelve
   a compilar). La configuración está en `render.yaml`; la base se conecta con `DATABASE_URL`.
+
+### Código por WhatsApp (sin costo)
+
+Meta no cobra los mensajes que las personas le escriben a Mesagri, y las respuestas (el código)
+tienen **1 000 gratis al mes por número**; después, unos centavos cada una. Meta puede pedir un
+medio de pago en la cuenta aunque no se pase de las 1 000. Se necesita una cuenta de Facebook
+(puede ser nueva, solo para Mesagri) y un número para Mesagri que no esté usando WhatsApp en un
+celular (un chip nuevo sirve).
+
+1. **developers.facebook.com** → registrarse como desarrollador → **Crear app** → caso de uso
+   **Conectar con clientes por WhatsApp** → crear el portafolio comercial «Mesagri».
+2. **WhatsApp → Configuración de la API**: ahí está el número de prueba de Meta (sirve para probar
+   con hasta 5 celulares). Para el público: **Agregar número de teléfono** con el número de
+   Mesagri, verificarlo con el código por SMS y poner el nombre visible «Mesagri».
+3. **Token permanente**: business.facebook.com → **Configuración → Usuarios del sistema** →
+   Agregar (administrador) → **Asignar activos** (la app y la cuenta de WhatsApp) → **Generar
+   token** con `whatsapp_business_messaging` y `whatsapp_business_management`.
+4. **Render → mesagri → Environment**: `WHATSAPP_TOKEN` (el token), `WHATSAPP_PHONE_ID` (el
+   identificador del número que se va a usar), `WHATSAPP_APP_SECRET` (en Meta: **Configuración de
+   la app → Básica → Clave secreta de la app**) y `WHATSAPP_VERIFY_TOKEN` (una clave que inventes,
+   por ejemplo `mesagri-verifica-2026`: la misma se escribe en Meta en el paso 5).
+5. **Webhook** (en Meta: **WhatsApp → Configuración**): URL de devolución de llamada
+   `https://mesagri.onrender.com/api/v1/whatsapp/webhook`, token de verificación = el valor de
+   `WHATSAPP_VERIFY_TOKEN` en Render → **Verificar y guardar** → en **Campos del webhook**,
+   suscribir **messages**.
+6. **Publicar la app** (modo «Activo»): pide la política de privacidad, que ya está en
+   <https://mesagri.onrender.com/privacidad>.
+
+Para revisar que todo quedó bien: `GET /api/v1/demo/whatsapp` con la clave del equipo (número,
+mensajes respondidos hoy y el último error).
 
 ## App para celulares
 

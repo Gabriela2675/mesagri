@@ -42,6 +42,10 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   return body as T;
 }
 
+/** Escenario de la demo (varios celulares simulados): los códigos se muestran en pantalla. */
+let STAGE = false;
+export const markStage = () => { STAGE = true; };
+
 /* ---------------- Clave del equipo y celulares de confianza ---------------- */
 
 const TEAM_KEY = 'mesagri.team';
@@ -163,9 +167,25 @@ export class Sessions {
 
 /* ---------------- Autenticación ---------------- */
 
+export interface OtpSent {
+  sent: boolean;
+  channel: 'WHATSAPP_IN' | 'WHATSAPP' | 'PANTALLA';
+  expiresIn: number;
+  demoCode?: string;
+  deviceOnly?: boolean;
+  demoAccount?: boolean;
+  to?: string;
+  notice?: string;
+  wa?: { link: string; number: string };
+}
+
 export const auth = {
-  /** deviceOnly: la cuenta es de una persona real y este no es un celular donde ya ingresó (el código no se muestra) */
-  otp: (phone: string, purpose: 'REGISTER' | 'LOGIN') => api<{ sent: boolean; channel: string; expiresIn: number; demoCode?: string; deviceOnly?: boolean }>('/auth/otp', { body: { phone, purpose }, headers: devHeaders(phone) }),
+  /**
+   * channel WHATSAPP_IN: la persona pide su código escribiendo a Mesagri por WhatsApp (wa.link abre el mensaje listo).
+   * channel WHATSAPP: Mesagri ya se lo mandó (to: número enmascarado). channel PANTALLA: versión de prueba, demoCode.
+   * deviceOnly: cuenta de una persona real y este no es un celular donde ya ingresó (el código no se muestra).
+   */
+  otp: (phone: string, purpose: 'REGISTER' | 'LOGIN') => api<OtpSent>('/auth/otp', { body: { phone, purpose, ...(STAGE ? { escenario: true } : {}) }, headers: { ...devHeaders(phone), ...(teamKey() || STAGE ? { 'x-team-key': teamKey() ?? '' } : {}) } }),
   verify: (phone: string, code: string) => api<{ ticket: string; expiresIn: number }>('/auth/otp/verify', { body: { phone, code } }),
   login: async (phone: string, code: string, device?: string, role?: string) => {
     const r = await api<{ userId: string; role: string; session: Session; deviceKey?: string }>('/auth/login', { body: { phone, code, device, role }, headers: devHeaders(phone) });

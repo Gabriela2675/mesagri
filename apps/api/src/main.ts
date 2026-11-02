@@ -45,7 +45,8 @@ export async function createApp() {
     next();
   });
   app.use('/api/v1/files', express.raw({ type: ['image/*', 'application/pdf', 'audio/*', 'application/octet-stream'], limit: '6mb' }));
-  app.use(express.json({ limit: '8mb' }));
+  // los avisos de WhatsApp se comprueban con su firma: se guarda el cuerpo tal cual llegó
+  app.use(express.json({ limit: '8mb', verify: (req: any, _res, buf) => { if (String(req.originalUrl ?? req.url ?? '').startsWith('/api/v1/whatsapp/')) req.rawBody = Buffer.from(buf); } }));
   if (CONFIG.corsOrigins.length) app.enableCors({ origin: CONFIG.corsOrigins, credentials: false });
 
   app.setGlobalPrefix('api/v1');
@@ -59,6 +60,10 @@ export async function createApp() {
     .addBearerAuth()
     .build());
   SwaggerModule.setup('api/docs', app, doc, { customSiteTitle: 'Mesagri · API', swaggerOptions: { persistAuthorization: true, docExpansion: 'none', tagsSorter: 'alpha' } });
+
+  // Política de privacidad (la pide Meta para publicar la app de WhatsApp)
+  const privacy = [path.resolve(__dirname, '../static/privacidad.html'), path.resolve(process.cwd(), 'apps/api/static/privacidad.html'), path.resolve(process.cwd(), 'static/privacidad.html')].find(f => fs.existsSync(f));
+  if (privacy) http.get(['/privacidad', '/privacy'], (_req, res) => { res.setHeader('Cache-Control', 'public, max-age=3600'); res.type('html').send(fs.readFileSync(privacy)); });
 
   // App web (app del celular en /, panel en /panel, demo de varios celulares en /demo) con rutas del lado del navegador
   if (fs.existsSync(path.join(CONFIG.webDist, 'index.html'))) {

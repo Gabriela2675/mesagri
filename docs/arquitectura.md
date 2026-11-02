@@ -170,9 +170,19 @@ En la nube (Render + Aiven, ver `render.yaml`) el servidor ya no manda el mundo 
   celular se aplican al instante con las reglas (optimista) y se confirman cuando llega su cambio.
   La prueba `packages/shared/test/privacy.test.ts` comprueba, acción por acción, que la copia de
   cada perfil es igual a lo que su perfil puede ver del mundo del servidor.
-- **Ingreso sin SMS**: el código se muestra en pantalla. En las cuentas reales solo en un celular de
-  confianza (tabla `trusted_devices`, llave en el encabezado `x-device-key`); «Restablecer acceso»
-  las olvida y el próximo celular donde ingrese ve el código.
+- **Código por WhatsApp** (`apps/api/src/auth/whatsapp.ts` y `whatsapp.controller.ts`): en modo
+  «responder» la app no recibe el código: `POST /auth/otp` devuelve `channel: WHATSAPP_IN` con un
+  enlace `wa.me` al número de Mesagri y el mensaje listo. Cuando la persona lo envía, Meta avisa a
+  `POST /api/v1/whatsapp/webhook` (firma `X-Hub-Signature-256` con el «App secret»); el servidor
+  genera el código para el número que escribió (el de su cuenta o el de la cuenta que va a crear) y
+  le responde con un mensaje de texto dentro de las 24 horas (sin plantilla). Los avisos repetidos
+  de Meta se descartan por id. Las cuentas de prueba muestran el código en pantalla; si quien pide
+  trae la clave del equipo, el enlace lleva una clave de 4 letras y la respuesta es el código de esa
+  cuenta de prueba. En el escenario de varios celulares (`escenario: true`), siempre en pantalla.
+  También existe el modo «plantilla» (Mesagri escribe primero; Meta lo cobra).
+- **Ingreso sin WhatsApp configurado**: el código se muestra en pantalla. En las cuentas reales solo
+  en un celular de confianza (tabla `trusted_devices`, llave en el encabezado `x-device-key`);
+  «Restablecer acceso» las olvida y el próximo celular donde ingrese ve el código.
 - **Clave del equipo**: protege `/demo/sessions`, `/demo/team`, `/demo/clock`, `/demo/reset` y
   `/sync/events` (acciones completas). Sin `TEAM_KEY` (la laptop) todo queda abierto como antes.
 - **Base y archivos**: `DATABASE_URL` con TLS (`ssl-mode=REQUIRED`; con `DB_CA_CERT` además se
