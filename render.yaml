@@ -9,6 +9,8 @@
 #      /panel   panel del equipo
 #      /demo    escenario de varios celulares (pide la clave del equipo)
 #    La clave del equipo (TEAM_KEY) la ves en Render → tu servicio → Environment.
+# Opcional: agrega DB_CA_CERT (el «CA certificate» de Aiven) en Environment para que, además de
+# cifrar, se compruebe que la base es la de Aiven.
 #
 # Plan gratis: se duerme a los 15 minutos sin uso y tarda cerca de un minuto en despertar.
 # =============================================================================
@@ -26,8 +28,6 @@ services:
       - key: NODE_VERSION
         value: 22.22.0
       - key: DATABASE_URL
-        sync: false
-      - key: DB_CA_CERT
         sync: false
       - key: TEAM_KEY
         generateValue: true
