@@ -125,6 +125,22 @@ export const CONFIG = {
     /** tope de mensajes por día (cada código de autenticación tiene costo) */
     dailyMax: num('WHATSAPP_DAILY_MAX', 500),
   },
+  /**
+   * Consulta del DNI (nombre como figura en RENIEC) con un proveedor de pago por consulta. Sin URL y
+   * token, la demo usa su padrón de prueba. La URL lleva {dni} donde va el número, por ejemplo
+   * https://api.factiliza.com/v1/dni/info/{dni}; el token va como «Authorization: Bearer ...» (o en
+   * la cabecera de DNI_API_HEADER, por ejemplo x-api-key). Si el proveedor informa el fallecimiento,
+   * se usa; si no, el expediente lo dice («la fuente no lo informa»).
+   */
+  dniApi: {
+    url: (env('DNI_API_URL', '') ?? '').trim(),
+    token: (env('DNI_API_TOKEN', '') ?? '').trim(),
+    header: (env('DNI_API_HEADER', 'Authorization') ?? 'Authorization').trim(),
+    provider: (env('DNI_API_PROVIDER', '') ?? '').trim(),
+    timeoutMs: num('DNI_API_TIMEOUT_MS', 7000),
+    /** tope de consultas al proveedor por día (cada una cuesta) */
+    dailyMax: num('DNI_API_DAILY_MAX', 300),
+  },
   /** Firma de los tokens de acceso (JWT HS256, 15 minutos). */
   jwtSecret: env('JWT_SECRET', 'mesagri-desarrollo-cambiar-en-produccion')!,
   accessTtlSeconds: num('ACCESS_TTL_SECONDS', 15 * 60),

@@ -144,8 +144,12 @@ export const MASKS: Record<string, Masker> = {
     return m;
   },
   cases: (c: VerifCase, _id, x) => {
-    if (isAdmin(x) || !realOrg(x, c.orgId) || own(x, c.orgId)) return c;
-    return { ...c, evidence: (c.evidence ?? []).map(e => ({ key: e.key, label: e.label, ...(e.ok !== undefined ? { ok: e.ok } : {}) })), history: [], alerts: [] };
+    if (isAdmin(x) || !realOrg(x, c.orgId)) return c;
+    // la persona ve su expediente, pero no el nombre oficial que devolvió la consulta del DNI (así nadie
+    // puede usar el registro para averiguar de quién es un DNI)
+    if (own(x, c.orgId)) return c.identity?.registry?.officialName ? { ...c, identity: { ...c.identity, registry: without(c.identity.registry, 'officialName') } } : c;
+    const m = { ...without(c, 'identity'), evidence: (c.evidence ?? []).map(e => ({ key: e.key, label: e.label, ...(e.ok !== undefined ? { ok: e.ok } : {}) })), history: [], alerts: [] };
+    return m;
   },
   subOrders: (s: SubOrder, id, x) => {
     let m = s;

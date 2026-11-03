@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -26,6 +27,43 @@ function offlineApp(): Plugin {
   };
 }
 
+/* Visión por computadora: los modelos del rostro (los usa la app al tomar las fotos: detector y
+ * puntos de la cara) y, solo en la versión con servidor, lo del panel (parecido del rostro y lector
+ * de texto para el código del reverso del DNI). Se copian desde node_modules a /vision y /ocr. */
+const req = createRequire(import.meta.url);
+const pkgDir = (name: string) => path.dirname(req.resolve(name + '/package.json'));
+function visionFiles(mode: string): Record<string, string> {
+  const face = path.join(pkgDir('@vladmandic/face-api'), 'model');
+  const nets = ['tiny_face_detector_model', 'face_landmark_68_model', ...(mode === 'autonoma' ? [] : ['face_recognition_model', 'ssd_mobilenetv1_model'])];
+  const out: Record<string, string> = {};
+  for (const n of nets) for (const f of [`${n}-weights_manifest.json`, `${n}.bin`]) out[`vision/${f}`] = path.join(face, f);
+  if (mode !== 'autonoma') {
+    out['ocr/worker.min.js'] = path.join(pkgDir('tesseract.js'), 'dist/worker.min.js');
+    out['ocr/tesseract-core-simd-lstm.wasm.js'] = path.join(pkgDir('tesseract.js-core'), 'tesseract-core-simd-lstm.wasm.js');
+    out['ocr/tesseract-core-lstm.wasm.js'] = path.join(pkgDir('tesseract.js-core'), 'tesseract-core-lstm.wasm.js');
+    out['ocr/eng.traineddata.gz'] = path.join(pkgDir('@tesseract.js-data/eng'), '4.0.0_best_int/eng.traineddata.gz');
+  }
+  return out;
+}
+function visionAssets(mode: string): Plugin {
+  const files = visionFiles(mode);
+  return {
+    name: 'mesagri-vision',
+    // en la compilación van como archivos del paquete (el service worker los ve en la lista)
+    generateBundle() { for (const [fileName, from] of Object.entries(files)) this.emitFile({ type: 'asset', fileName, source: fs.readFileSync(from) }); },
+    // en desarrollo se sirven directo de node_modules
+    configureServer(server) {
+      server.middlewares.use((rq, res, next) => {
+        const u = (rq.url ?? '').split('?')[0].replace(/^\//, '');
+        const from = files[u];
+        if (!from) return next();
+        res.setHeader('Content-Type', u.endsWith('.json') ? 'application/json' : u.endsWith('.js') ? 'text/javascript' : 'application/octet-stream');
+        fs.createReadStream(from).pipe(res);
+      });
+    },
+  };
+}
+
 const shared = fileURLToPath(new URL('../../packages/shared/src', import.meta.url));
 const api = process.env.MESAGRI_API ?? 'http://localhost:3000';
 
@@ -35,7 +73,7 @@ const api = process.env.MESAGRI_API ?? 'http://localhost:3000';
 export default defineConfig(({ mode }) => ({
   base: mode === 'autonoma' ? './' : '/',
   define: mode === 'autonoma' ? { 'import.meta.env.VITE_LOCAL': JSON.stringify('1') } : {},
-  plugins: mode === 'autonoma' ? [react(), offlineApp()] : [react()],
+  plugins: mode === 'autonoma' ? [react(), visionAssets(mode), offlineApp()] : [react(), visionAssets(mode)],
   resolve: { alias: [{ find: /^@mesagri\/shared$/, replacement: shared + '/index.ts' }, { find: /^@mesagri\/shared\/(.*)$/, replacement: shared + '/$1' }] },
   server: {
     host: true,

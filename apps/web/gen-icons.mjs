@@ -12,7 +12,7 @@ siren minus arrow-right receipt hand-coins box boxes file-check scroll-text gaug
 fast-forward rotate-ccw monitor sparkles megaphone tag external-link menu ellipsis-vertical mail key-round id-card scan-line
 tractor cloud-upload signal bike container thumbs-up headphones square-pen hourglass circle-x clipboard-check
 file-exclamation-point map-pinned undo-2 save notebook-pen calendar-clock circle-user circle-play pause audio-lines
-arrow-left trending-down zap eye-off`.split(/\s+/).filter(Boolean);
+arrow-left trending-down zap eye-off scan-face aperture arrow-big-left arrow-big-right`.split(/\s+/).filter(Boolean);
 const dir = path.resolve('node_modules/lucide/dist/esm/icons');
 const out = {};
 for (const n of names) {

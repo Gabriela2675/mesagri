@@ -12,7 +12,7 @@ test.beforeEach(async ({ request }) => {
   expect((await request.post(BASE + '/api/v1/demo/reset', { data: {}, headers: teamHeaders() })).ok()).toBe(true);
 });
 
-const APK_UA = 'Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36 MesagriApp/1.2.0';
+const APK_UA = 'Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36 MesagriApp/1.3.0';
 
 test('APK: pantalla de conexión mientras despierta el servidor, sin internet y cambio de dirección', async ({ browser }) => {
   const ctx = await browser.newContext({ userAgent: APK_UA, viewport: { width: 390, height: 844 } });

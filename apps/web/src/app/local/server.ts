@@ -14,7 +14,8 @@ import { applySafe, structuredCloneSafe, emptyWorld } from '@mesagri/shared/engi
 import { HANDLERS } from '@mesagri/shared/engine/core';
 import { hasDue } from '@mesagri/shared/engine/tick';
 import { uid } from '@mesagri/shared/ids';
-import { isPhoneValid, passwordProblem } from '@mesagri/shared/rules';
+import { isPhoneValid, passwordProblem, isDniValid } from '@mesagri/shared/rules';
+import { registryFor, testDni, TEST_DNIS } from '@mesagri/shared/identity';
 import { SEED_ANCHOR, SEED_VERSION } from '@mesagri/shared/seed';
 import { PROTOCOL } from '@mesagri/shared/protocol';
 import { ApiError } from '../net';
@@ -27,7 +28,7 @@ interface LocalCred { salt: string; hash: string; temp: boolean; until?: number;
 interface Saved { v: 1; protocol: number; seedVersion?: string; epoch: string; seq: number; world: World; simNow: number; revoked: Record<string, number>; pw?: Record<string, LocalCred> }
 type Listener = (type: 'event' | 'reset', data: unknown) => void;
 
-const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK']);
+const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK', 'VERIF_IDCHECK']);
 const ID_RE = /^[A-Za-z0-9:_.-]{3,80}$/;
 const OTP_TTL = 5 * 60_000;
 const TICKET_TTL = 15 * 60_000;
@@ -215,7 +216,18 @@ export class LocalServer {
     if (this.log.length > 1500) for (const x of this.log.splice(0, 500)) this.byId.delete(x.event.id);
     this.scheduleSave();
     this.emit('event', structuredCloneSafe(out));
+    // expediente con identidad: como el servidor, consulta el DNI (aquí, en el padrón de prueba) y lo anota
+    if ((type === 'VERIF_SUBMIT' || type === 'VERIF_RESPOND') && p.identity) setTimeout(() => this.dniCheck(String(p.caseId)), 300);
     return { ok: true, seq: out.seq, event: structuredCloneSafe(e), result: r.result };
+  }
+
+  /** Consulta del DNI en el padrón de prueba (la versión sin internet no consulta RENIEC). */
+  private dniCheck(caseId: string) {
+    const id = this.world.cases[caseId]?.identity;
+    if (!id) return undefined;
+    const registry = registryFor(testDni(id.dni), id.dni, id.name, id.digit, this.simNow(), 'PADRON_PRUEBA');
+    this.apply({ type: 'VERIF_IDCHECK', actor: 'system', p: { caseId, dni: id.dni, registry } }, true);
+    return registry;
   }
 
   /* ---------------- Sesiones ---------------- */
@@ -522,6 +534,27 @@ export class LocalServer {
 
     // las fotos y documentos viven en el celular (no hay servidor de archivos)
     if (method === 'POST' && route === '/files') return { ok: true, id: b.id };
+
+    // identidad: la versión sin internet usa el padrón de prueba
+    if (method === 'GET' && route === '/identity/registry') return { source: 'PADRON_PRUEBA', tests: TEST_DNIS.map(x => ({ dni: x.dni, note: x.note })) };
+    if (method === 'POST' && route === '/identity/dni-check') {
+      const dni = String(b.dni ?? '').trim();
+      if (!isDniValid(dni)) fail(422, 'BAD_DNI', 'El DNI tiene 8 números.');
+      const name = String(b.name ?? '').replace(/\s+/g, ' ').trim();
+      if (name.length < 5 || name.split(' ').length < 2) fail(422, 'BAD_NAME', 'Escribe el nombre completo, como figura en el DNI.');
+      const t = this.tickets.get(String(b.ticket ?? ''));
+      if (!(t && t.exp > Date.now())) this.userOf(token);
+      const r = registryFor(testDni(dni), dni, name, b.digit ? String(b.digit) : undefined, this.simNow(), 'PADRON_PRUEBA');
+      return { status: r.status, source: r.source, digitOk: r.digitOk ?? null, deceased: r.deceased ?? null };
+    }
+    const recheck = /^\/admin\/cases\/([^/]+)\/dni-check$/.exec(route);
+    if (method === 'POST' && recheck) {
+      const actor = this.userOf(token);
+      const u = w.users[actor];
+      if (u?.role !== 'ADMIN' || !['GENERAL', 'VERIFIER'].includes(u.adminRole ?? '')) fail(403, 'FORBIDDEN', 'Tu cuenta no puede hacer esta acción.');
+      if (!w.cases[recheck[1]]?.identity) fail(422, 'NO_IDENTITY', 'Este expediente no tiene DNI para consultar.');
+      return { registry: this.dniCheck(recheck[1]) };
+    }
 
     fail(404, 'NOT_FOUND', 'No existe esa ruta en la versión autónoma.');
     return undefined;

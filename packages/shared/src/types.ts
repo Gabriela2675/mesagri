@@ -300,6 +300,62 @@ export interface VerifCase {
   history: { at: number; by: string; text: string }[];
   decision?: { by: string; at: number; result: 'APPROVE' | 'NEEDS_INFO' | 'REJECT'; reason: string };
   appealed?: boolean;
+  /** Identidad de la persona con su revisión automática (DNI, nombre, fotos del DNI y del rostro). */
+  identity?: CaseIdentity;
+}
+
+/* ---------- Identidad: DNI, nombre, fotos del DNI y del rostro en tres ángulos ---------- */
+/** Ángulo del rostro: de frente, girado a su derecha o a su izquierda. */
+export type FacePose = 'FRONT' | 'RIGHT' | 'LEFT';
+export interface FaceShot {
+  pose: FacePose;
+  photoId: string;
+  /** Revisión en el celular al tomarla (visión por computadora). */
+  auto?: { ok: boolean; faces: number; yaw?: number; light?: number; sharp?: number; note?: string };
+  /** Tomada con la cámara en vivo dentro de la app (no elegida de la galería). */
+  live?: boolean;
+  at?: number;
+}
+export type RegistryStatus = 'MATCH' | 'PARTIAL' | 'NAME_MISMATCH' | 'NOT_FOUND' | 'DECEASED' | 'UNAVAILABLE';
+/** Consulta del DNI (RENIEC, por un proveedor, o el padrón de prueba de la demo). */
+export interface RegistryCheck {
+  status: RegistryStatus;
+  source: 'PADRON_PRUEBA' | 'PROVEEDOR' | 'SIN_CONSULTA';
+  provider?: string;
+  /** Nombre oficial: solo lo ve el equipo de Mesagri. */
+  officialName?: string;
+  /** Parecido del nombre escrito con el oficial (0 a 1). */
+  score?: number;
+  /** El dígito de verificación coincide (null: la fuente no lo da o no se escribió). */
+  digitOk?: boolean | null;
+  /** Falleció (null: la fuente no lo informa). */
+  deceased?: boolean | null;
+  at: number;
+  note?: string;
+}
+/** Lo que lee el panel en las fotos (visión por computadora, en la computadora de quien verifica). */
+export interface DocReview {
+  at: number;
+  by: string;
+  /** Código de abajo del reverso del DNI (MRZ). */
+  mrz?: { read: boolean; checks?: boolean; dni?: string; digit?: string; surnames?: string; given?: string; birth?: string; expiry?: string; sex?: string };
+  /** El número del DNI se lee en el frente. */
+  frontDni?: boolean | null;
+  /** Parecido del rostro con la foto del DNI. */
+  faceMatch?: { distance: number; level: 'ALTA' | 'MEDIA' | 'BAJA' } | null;
+  faces?: { pose: FacePose; ok: boolean; yaw?: number }[];
+  note?: string;
+}
+export interface CaseIdentity {
+  dni: string;
+  /** Dígito de verificación que escribió (el que va después del guion en el DNI). */
+  digit?: string;
+  name: string;
+  dniFront?: string;
+  dniBack?: string;
+  faces: FaceShot[];
+  registry?: RegistryCheck;
+  review?: DocReview;
 }
 
 export type ListingStatus = 'ACTIVE' | 'PAUSED' | 'SOLD_OUT' | 'EXPIRED' | 'IN_REVIEW' | 'REJECTED' | 'REMOVED' | 'QUEUED';

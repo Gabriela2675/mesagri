@@ -233,6 +233,16 @@ select.inp { appearance: none; background-image: linear-gradient(45deg, transpar
 .inpwrap .suf { position: absolute; right: .9em; color: var(--moss); font-weight: 700; font-size: .9em; pointer-events: none; display: inline-flex; }
 .inpwrap .pre { position: absolute; left: .9em; color: var(--moss); font-weight: 800; pointer-events: none; }
 .inpwrap .pre + .inp { padding-left: 3em; }
+/* Campo con «S/» o «kg» al lado: el borde es del grupo y el número ocupa todo el espacio libre */
+.igrp { display: flex; align-items: center; gap: .4em; width: 100%; min-width: 0; min-height: 3.25em; border-radius: .875em; border: 1.5px solid var(--line); background: #fff; color: var(--ink); padding: 0 .9em; cursor: text; transition: border-color .15s, box-shadow .15s; }
+.igrp:focus-within { border-color: var(--field); box-shadow: 0 0 0 1.5px var(--field); }
+.igrp.err { border-color: var(--danger); box-shadow: 0 0 0 1.5px var(--danger); }
+.igrp .inp { flex: 1 1 auto; width: 100%; min-width: 2.2em; min-height: 3.1em; border: 0; border-radius: 0; box-shadow: none; background: transparent; padding: .6em 0; }
+.igrp .inp:focus { box-shadow: none; }
+.igrp .pre { flex: none; color: var(--moss); font-weight: 800; }
+.igrp .suf { flex: none; color: var(--moss); font-weight: 700; font-size: .9em; display: inline-flex; align-items: center; }
+.wapp .igrp { min-height: 44px; }
+.wapp .igrp .inp { min-height: 40px; }
 .help { font-size: .75em; color: var(--moss); }
 .errt { font-size: .78em; color: var(--danger); font-weight: 700; display: flex; gap: .3em; align-items: flex-start; }
 
@@ -587,3 +597,36 @@ button.stat:hover { box-shadow: var(--elev2); }
 .thumb { width: 4.2em; flex: none; padding: 0; border: 2px solid transparent; border-radius: .8em; background: transparent; cursor: pointer; }
 .thumb.on { border-color: var(--field); }
 .thumb .photo { border-radius: .6em; }
+
+/* ================= Identidad: cámara guiada del rostro y del DNI ================= */
+.cam { position: relative; width: 100%; aspect-ratio: 3 / 4; max-height: 58vh; margin: 0 auto; background: #10180f; border-radius: 1.2em; overflow: hidden; }
+.cam.doc { aspect-ratio: 4 / 3; }
+.cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cam.selfie video { transform: scaleX(-1); }
+.cam .oval { position: absolute; left: 50%; top: 45%; height: 74%; width: auto; aspect-ratio: 3 / 4; transform: translate(-50%, -50%); border-radius: 50%; border: .25em solid #fff; box-shadow: 0 0 0 100em rgba(16, 24, 15, .5); transition: border-color .2s; }
+.cam.good .oval { border-color: var(--leaf); border-width: .35em; }
+.cam .cardframe { position: absolute; left: 50%; top: 44%; width: 86%; max-height: 80%; aspect-ratio: 1.586; transform: translate(-50%, -50%); border-radius: .8em; border: .22em dashed #fff; box-shadow: 0 0 0 100em rgba(16, 24, 15, .45); }
+.cam .camhint { position: absolute; left: .6em; right: .6em; bottom: .6em; background: rgba(0, 0, 0, .62); color: #fff; border-radius: .8em; padding: .55em .8em; font-weight: 800; text-align: center; line-height: 1.25; }
+.cam .turn { position: absolute; top: 44%; color: #fff; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .5)); }
+.cam .turn.r { right: .3em; animation: nudge-r 1s ease-in-out infinite; }
+.cam .turn.l { left: .3em; animation: nudge-l 1s ease-in-out infinite; }
+@keyframes nudge-r { 0%, 100% { transform: translate(0, -50%); } 50% { transform: translate(.45em, -50%); } }
+@keyframes nudge-l { 0%, 100% { transform: translate(0, -50%); } 50% { transform: translate(-.45em, -50%); } }
+.cam .flash { position: absolute; inset: 0; background: #fff; opacity: 0; animation: camflash .4s ease-out; pointer-events: none; }
+@keyframes camflash { from { opacity: .85; } to { opacity: 0; } }
+.dots3 { display: flex; justify-content: center; gap: .6em; }
+.dots3 span { width: 2em; height: 2em; border-radius: 99px; display: inline-flex; align-items: center; justify-content: center; font-weight: 900; background: var(--mint); color: var(--field); }
+.dots3 span.cur { background: var(--field); color: #fff; }
+.dots3 span.done { background: var(--leaf); color: var(--forest); }
+.idfaces { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5em; }
+.idfaces figure { margin: 0; display: flex; flex-direction: column; gap: .3em; min-width: 0; align-items: flex-start; }
+.idfaces .photo { aspect-ratio: 3 / 4; }
+.idfaces .chip { font-size: .78em; }
+.iddigit { width: 5.2em; flex: none; }
+/* Panel: revisión automática de la identidad */
+.idrev { display: grid; gap: 10px; }
+.idrev .rowx { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; font-size: 14.5px; }
+.idrev .rowx small { display: block; color: var(--moss); font-size: 12.5px; margin-top: 2px; }
+.idrev .faces3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 460px; margin-left: 32px; }
+.idrev .faces3 .photo { aspect-ratio: 3 / 4; }
+.mrzbox { font-family: 'DejaVu Sans Mono', 'Liberation Mono', Consolas, monospace; font-size: 12px; background: #f2f5ee; border-radius: 8px; padding: 8px 10px; white-space: pre; overflow-x: auto; }

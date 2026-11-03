@@ -119,7 +119,12 @@ export function Inp(p: { value: string | number; onInput: (v: string) => void; t
   if (p.area) return <textarea {...common} />;
   const input = <input {...common} type={p.type ?? 'text'} inputMode={p.mode} autoComplete={p.autoComplete ?? 'off'} />;
   if (!p.suffix && !p.prefix) return input;
-  return <div className="inpwrap">{p.prefix && <span className="pre">{p.prefix}</span>}{input}{p.suffix && <span className="suf">{p.suffix}</span>}</div>;
+  // «S/» o «kg» al lado del número (no encima): el número siempre tiene su espacio y se ve completo
+  return (
+    <div className={'igrp' + (p.err ? ' err' : '')} onClick={(e: any) => { if (!e.target.closest?.('button, a, input')) ref.current?.focus(); }}>
+      {p.prefix && <span className="pre">{p.prefix}</span>}{input}{p.suffix && <span className="suf">{p.suffix}</span>}
+    </div>
+  );
 }
 export function Sel<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: { v: T; l: string }[]; label?: string }) {
   return <select className="inp" value={value} aria-label={label} onChange={(e: any) => onChange(e.currentTarget.value)}>{options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}</select>;
@@ -137,7 +142,7 @@ export function Qty({ value, onChange, step = 1, min = 0, max, unit, decimals = 
   return (
     <div className="qty">
       <button aria-label="Menos" onPointerDown={() => hold(-step)} onPointerUp={release} onPointerLeave={release} onKeyDown={(e: any) => { if (e.key === 'Enter' || e.key === ' ') bump(-step); }}><Icon n="minus" w={3} /></button>
-      <input aria-label="Cantidad" inputMode={decimals ? 'decimal' : 'numeric'} value={txt} onChange={(e: any) => { const v = e.currentTarget.value; setTxt(v); const n = Number(v.replace(',', '.')); if (isFinite(n) && v.trim() !== '') onChange(clamp(n)); }} onBlur={() => setTxt(String(value).replace('.', ','))} />
+      <input aria-label="Cantidad" inputMode={decimals ? 'decimal' : 'numeric'} value={txt} style={{ width: `${Math.min(6.5, Math.max(2.4, txt.length * 0.66 + 0.9))}em` }} onChange={(e: any) => { const v = e.currentTarget.value; setTxt(v); const n = Number(v.replace(',', '.')); if (isFinite(n) && v.trim() !== '') onChange(clamp(n)); }} onBlur={() => setTxt(String(value).replace('.', ','))} />
       {unit && <span className="u">{unit}</span>}
       <button aria-label="Más" onPointerDown={() => hold(step)} onPointerUp={release} onPointerLeave={release} onKeyDown={(e: any) => { if (e.key === 'Enter' || e.key === ' ') bump(step); }}><Icon n="plus" w={3} /></button>
     </div>

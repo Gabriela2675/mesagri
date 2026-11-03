@@ -40,7 +40,7 @@ export async function createApp() {
     // en la nube siempre se entra por https: el navegador no vuelve a probar sin cifrar
     if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
     if (!req.path.startsWith('/api/docs')) {
-      res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self' ws: wss:; media-src 'self' blob: data:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
+      res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self' ws: wss:; media-src 'self' blob: data:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
     }
     next();
   });

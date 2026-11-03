@@ -31,7 +31,7 @@ Viene de tres formas:
 
 | Tipo de usuario | Funciones |
 |---|---|
-| Agricultor | Publicar cosecha (formulario o voz) **con fotos reales** (hasta 3, de la cámara o la galería; se cambian después en «Editar»), pedidos con plazo y comisión a la vista, confirmar pagos, entregar con código, enviar con transportista (QR), almacén, estado de cuenta, chat, calificaciones, verificación por niveles, **solicitudes de compra** (ofrecer su precio) y **quién publica por mí** (familiar o promotor con permisos) |
+| Agricultor | Registro con **DNI, dígito de verificación y rostro en tres ángulos** (cámara guiada con visión por computadora), publicar cosecha (formulario o voz) **con fotos reales** (hasta 3, de la cámara o la galería; se cambian después en «Editar»), pedidos con plazo y comisión a la vista, confirmar pagos, entregar con código, enviar con transportista (QR), almacén, estado de cuenta, chat, calificaciones, verificación por niveles, **solicitudes de compra** (ofrecer su precio) y **quién publica por mí** (familiar o promotor con permisos) |
 | Comprador MYPE | Catálogo con filtros, carrito por agricultor, pago directo (Yape, Plin, transferencia, efectivo), seguimiento, conformidad, reclamos, comprobantes, reportes, favoritos, planes Básico y Pro, **solicitudes de compra**, **pedidos programados** (Pro), **equipo y locales** con permisos |
 | Almacén aliado | Reservas, recepción con foto y peso, lotes y certificados, despachos, incidencias, cobros |
 | Transportista aliado | Ofertas de envío, ruta del día, recojo con **QR de la cámara**, entrega con código, flete, cobros, **conductores** y **cambio de vehículo** (vuelve a revisión) |
@@ -61,6 +61,50 @@ chacra (GPS), fotos con la cámara o de la galería y lectura del QR desde la fo
   en cada acción, y a quien es **analista** le llegan los datos sin información personal.
 - **Reiniciar la demo no borra al equipo**: las personas agregadas, los roles, los datos
   personalizados y las claves propias se conservan. Todo queda en la auditoría.
+
+## Identidad: DNI, nombre y rostro en tres ángulos
+
+Se pide en el registro del agricultor, en «Verifica tu negocio» de la MYPE (representante), al
+transportista (quien maneja) y al almacén (representante):
+
+- **Nombre como figura en el DNI, número y dígito de verificación** (el que va después del guion, al
+  lado del número). Mientras la persona escribe, el servidor consulta si el nombre coincide con el
+  DNI. A quien se registra solo se le dice si coincide, nunca el nombre oficial (así nadie puede
+  usar el registro para averiguar datos ajenos), y la consulta pide haber verificado el celular y
+  tiene límite de intentos.
+- **Fotos del DNI por los dos lados**, con la cámara de atrás y un marco del tamaño del DNI. La app
+  revisa que no salgan borrosas ni oscuras y que el frente tenga la foto de la persona.
+- **Tres fotos del rostro: de frente, girando a su derecha y a su izquierda**, con la cámara guiada.
+  La visión por computadora del celular (detector de caras y 68 puntos del rostro, unos 550 KB)
+  mira el video, mide cuánto giró la cabeza y toma cada foto sola cuando hay una sola cara, en el
+  ángulo pedido, con buena luz y sin moverse. Guía con la voz. Si la cámara en vivo no abre, cada
+  foto se toma con la cámara del celular y se revisa igual. Es la **prueba de vida**: una foto
+  impresa o una pantalla no gira como una cara.
+- **En el panel** (Verificaciones → expediente, y en transportistas y almacenes), la **revisión
+  automática** corre sola al abrir el expediente: lee el **código de abajo del reverso del DNI**
+  (número, nombres, nacimiento y vencimiento, comprobados con sus dígitos de control), busca el
+  **número en el frente**, compara el **rostro con la foto del DNI** (parecido alto, medio o bajo)
+  y vuelve a medir los tres ángulos. Avisa si el DNI de la foto es otro, si el nombre no coincide,
+  si el DNI venció, si es menor de edad o si la cara no se parece. Todo queda en el expediente y en
+  la auditoría; **decide una persona** (RN-16). El lector de texto y la comparación del rostro
+  (unos 19 MB) están solo en el panel en línea, no en el APK.
+- **Persona viva**: la consulta que se usa (nombre por DNI) no informa fallecimientos; ese dato lo
+  da el servicio de RENIEC para entidades con convenio. Si el proveedor configurado sí lo informa,
+  el DNI de una persona fallecida se bloquea al registrarse. Mientras tanto lo cubren la prueba de
+  vida y el parecido con la foto del DNI: quien use el DNI de otra persona, viva o fallecida, no
+  pasa la comparación del rostro.
+- **Versión de prueba**: sin proveedor, la consulta usa un **padrón de prueba** con DNI de ejemplo
+  que se tocan en pantalla: 41235876 (Teodora Quispe Mamani), 44871209 (Rubén Darío Huamaní
+  Condori, el de las fotos de ejemplo) y 40817263 (figura como fallecido, para ver el bloqueo).
+  Hay **fotos de ejemplo** del DNI y del rostro (un documento de prueba marcado «MUESTRA SIN VALOR»
+  y un rostro 3D, no de una persona real).
+- **Conectar RENIEC de verdad**: con una cuenta en un proveedor de consultas de DNI (por ejemplo
+  Factiliza o Decolecta; cobran por consulta), en Render → Environment se ponen `DNI_API_URL` (con
+  `{dni}` donde va el número, por ejemplo `https://api.factiliza.com/v1/dni/info/{dni}`) y
+  `DNI_API_TOKEN`. **El token se pega solo en Render, nunca en el chat ni en GitHub.** Cada consulta
+  se guarda 30 días (no se paga dos veces) y hay un tope de 300 por día (`DNI_API_DAILY_MAX`).
+- Las fotos del DNI y del rostro las ve solo el equipo de verificación y se borran a los 90 días
+  (Ley 29733).
 
 ## En la nube (Render + Aiven)
 
@@ -160,7 +204,7 @@ mensajes respondidos hoy y el último error).
 | **Android 7 o más** | `Mesagri.apk` (por WhatsApp, Google Drive o un enlace) | Abrir el archivo → permitir **Instalar apps desconocidas** para la app con que se abrió (WhatsApp, Drive o Archivos) → **Instalar**. Si Play Protect avisa, **Más detalles → Instalar de todas formas** (la app no está en Play Store). |
 | **iPhone** y cualquier celular | El enlace <https://mesagri.onrender.com> | Abrir el enlace en el navegador. En iPhone se puede dejar en la pantalla de inicio con **Compartir → Agregar a inicio**. |
 
-- **El APK (versión 1.2.0) se conecta a la nube**: abre `https://mesagri.onrender.com` y todos ven
+- **El APK (versión 1.3.0) se conecta a la nube**: abre `https://mesagri.onrender.com` y todos ven
   lo mismo según su perfil. Sin internet ofrece **Probar sin internet**: la versión autónoma con
   datos de ejemplo guardados solo en ese celular (desde ahí, **Usar la versión en línea** vuelve a
   la nube). Si la dirección del servidor cambia, en la pantalla de conexión está **Cambiar la
@@ -171,6 +215,8 @@ mensajes respondidos hoy y el último error).
   del equipo se abre desde **Ya tengo cuenta → Equipo de Mesagri**, con las cuentas de prueba.
 - En el APK funcionan la cámara (fotos y QR), el GPS de la chacra, las llamadas, los mapas, el
   dictado por voz y la guía de audio del celular, y los PDF y CSV se guardan o se comparten.
+- **Identidad**: la cámara guiada del rostro y del DNI funciona en el APK (también sin internet,
+  con los modelos de visión dentro del APK).
 - **Permisos**: el APK pide la **cámara** al tomar una foto, el **micrófono** al publicar hablando
   (el dictado corre dentro de la app) y la **ubicación** al marcar la chacra. La primera vez que
   alguien entra, un cuadro le pide juntos los que usa su perfil (el agricultor: los tres; los

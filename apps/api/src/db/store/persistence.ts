@@ -28,7 +28,7 @@ export const UNITS: Unit[] = [
 
 /** Tablas de referencia que no se tocan al reiniciar la demo. */
 /** Se conservan al reiniciar la demo: el equipo de Mesagri (cuentas del panel creadas o hechas propias). */
-export const KEEP_ON_RESET = ['team_accounts'];
+export const KEEP_ON_RESET = ['team_accounts', 'identity_lookups'];
 export const REFERENCE_TABLES = ['schema_migrations', 'ubigeo', 'roles', 'units', 'product_categories', 'catalog_products', 'catalog_product_aliases', 'crop_references', 'market_prices'];
 
 type Sigs = Map<string, Map<string, string>>;

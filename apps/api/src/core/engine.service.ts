@@ -38,7 +38,7 @@ export interface ApplyInput {
 }
 
 /** Acciones que solo puede hacer el servidor. */
-export const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK']);
+export const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK', 'VERIF_IDCHECK']);
 
 const rand4 = () => String(crypto.randomInt(0, 10000)).padStart(4, '0');
 const ALNUM = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';

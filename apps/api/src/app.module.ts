@@ -26,6 +26,8 @@ import { CatalogController } from './domain/catalog.controller';
 import { OrdersController } from './domain/orders.controller';
 import { VerificationController, AdminController } from './domain/admin.controller';
 import { StorageController, BillingController, ShippingController } from './domain/logistics.controller';
+import { IdentityController } from './identity/identity.controller';
+import { DniRegistry } from './identity/dni';
 
 @ApiTags('Servidor')
 @Controller()
@@ -43,8 +45,8 @@ class HealthController {
 @Global()
 @Module({
   imports: [JwtModule.register({ secret: CONFIG.jwtSecret, signOptions: { algorithm: 'HS256', issuer: 'mesagri' }, verifyOptions: { algorithms: ['HS256'], issuer: 'mesagri' } })],
-  providers: [EngineService, Commands, TeamAccounts, WhatsAppService, SmsService, AuthService, AuthGuard, SyncGateway],
-  controllers: [HealthController, AuthController, WhatsAppController, TeamController, SyncController, DemoController, FilesController, CatalogController, OrdersController, VerificationController, AdminController, StorageController, BillingController, ShippingController],
+  providers: [EngineService, Commands, TeamAccounts, DniRegistry, WhatsAppService, SmsService, AuthService, AuthGuard, SyncGateway],
+  controllers: [HealthController, AuthController, WhatsAppController, TeamController, SyncController, DemoController, FilesController, CatalogController, OrdersController, VerificationController, AdminController, StorageController, BillingController, ShippingController, IdentityController],
   exports: [EngineService, Commands, AuthService, AuthGuard],
 })
 export class AppModule {}

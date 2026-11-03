@@ -508,6 +508,7 @@ export const casesUnit: Unit = {
       uuid: k.id, organization_id: ids.need('organizations', k.orgId), subject: k.kind, target_level: k.targetLevel, status: k.status,
       submitted_at: dt(k.submittedAt), assigned_to: ids.opt('users', k.assignedTo), decided_by: ids.opt('users', d?.by), decided_by_uuid: nv(d?.by),
       decision_result: nv(d?.result), decision_reason: d ? String(d.reason ?? '') : null, decided_at: dt(d?.at), appealed: bn(k.appealed), history: js(k.history),
+      identity: k.identity ? js(k.identity) : null,
     });
     ids.set('verification_cases', k.id, id);
     if (changed(prev, k, x => x.evidence)) {
@@ -535,6 +536,7 @@ export const casesUnit: Unit = {
         alerts: (checks.get(r.id) ?? []).map(x => x.check_type), history: r.history ?? [],
         decision: r.decision_result ? { by: r.decided_by_uuid ?? '', at: tm(r.decided_at), result: r.decision_result, reason: r.decision_reason ?? '' } : undefined,
         appealed: ob(r.appealed),
+        identity: r.identity ?? undefined,
       } as VerifCase);
       w.cases[k.id] = k;
     }

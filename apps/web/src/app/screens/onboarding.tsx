@@ -17,6 +17,7 @@ import { useInstall } from '../install';
 import { liveSub } from '../helpers';
 import { auth, deviceAccounts } from '../net';
 import { openExternal, waitSmsCode } from '../platform';
+import { IdentityForm, identityProblem, confirmIdentity, idPayload, emptyId, type IdDraft } from './identity';
 import { money, dateShort, hhmm } from '@mesagri/shared/format';
 import { DOW_CHIP } from '@mesagri/shared/time';
 import type { Role, VerifCase, Evidence, Org } from '@mesagri/shared/types';
@@ -546,50 +547,31 @@ function districtOptions(filter?: (d: typeof DISTRICTS[number]) => boolean) {
 function Identity() {
   const A = useApp();
   const R = regGet(A);
-  const [name, setName] = useState(R.name ?? '');
-  const [dni, setDni] = useState(R.dni ?? '');
+  const [d, setD] = useState<IdDraft>(() => R.id ?? emptyId(R.name ?? '', R.dni ?? ''));
   const [district, setDistrict] = useState(R.district ?? '040519');
-  const [ph, setPh] = useState<Record<string, string | undefined>>(R.photos ?? {});
-  const [err, setErr] = useState<Record<string, string>>({});
-  const go = (withDocs: boolean) => {
-    const e: Record<string, string> = {};
-    if (name.trim().length < 3) e.name = 'Escribe tu nombre completo, como en tu DNI.';
-    if (!isDniValid(dni)) e.dni = 'El DNI tiene 8 números.';
-    setErr(e);
-    if (Object.keys(e).length) return;
+  const [err, setErr] = useState('');
+  const go = async (withDocs: boolean) => {
+    const p = identityProblem(d, withDocs);
+    if (p) { setErr(p); return; }
+    if (withDocs && !(await confirmIdentity(A, d))) return;
+    const name = d.name.replace(/\s+/g, ' ').trim(), dni = d.dni;
     const userId = 'u-' + uid(), orgId = 'org-' + uid();
-    const r = A.act('USER_REGISTER', { userId, orgId, role: 'FARMER', phone: R.phone, name: name.trim(), dni, lang: A.dev.pre?.lang ?? 'es', org: { district, name: name.trim() } }, { as: userId });
-    if (!r.ok) { if (r.error?.code === 'DNI_TAKEN') setErr({ dni: r.error.message }); return; }
+    const r = A.act('USER_REGISTER', { userId, orgId, role: 'FARMER', phone: R.phone, name, dni, lang: A.dev.pre?.lang ?? 'es', org: { district, name } }, { as: userId });
+    if (!r.ok) { setErr(r.error?.message ?? 'No pudimos crear tu cuenta.'); return; }
     A.act('CONSENTS_ACCEPT', { version: '1.0', items: R.consents ?? { distrito: true, dni: true } }, { as: userId, quiet: true });
     A.act('PREFS_SET', { prefs: { lang: A.dev.pre?.lang ?? 'es', audioGuide: A.dev.pre?.audioGuide ?? true, bilingual: !!A.dev.pre?.bilingual } }, { as: userId, quiet: true });
-    if (withDocs && (ph.front || ph.selfie)) {
-      const ev: Evidence[] = [{ key: 'dni', label: 'DNI (ambas caras)', photoId: ph.front, detail: `DNI ${maskDni(dni)}` }, { key: 'selfie', label: 'Selfie', photoId: ph.selfie }];
-      if (ph.back) ev.push({ key: 'dni2', label: 'DNI · reverso', photoId: ph.back });
-      A.act('VERIF_SUBMIT', { caseId: 'case-' + uid(), orgId, targetLevel: 1, evidence: ev }, { as: userId, quiet: true });
-    }
-    A.patch(d => { d.userId = userId; d.flow = { ...d.flow, reg: { ...(d.flow.reg ?? {}), name, dni, district, photos: ph, userId, orgId } }; d.stack = [{ s: 'A-06', p: { onboarding: 1 } }]; });
+    // con las fotos, la identidad va a verificación (el servidor consulta el DNI y el equipo revisa)
+    if (withDocs) A.act('VERIF_SUBMIT', { caseId: 'case-' + uid(), orgId, targetLevel: 1, identity: idPayload(d), evidence: [] }, { as: userId, quiet: true });
+    A.patch(x => { x.userId = userId; x.flow = { ...x.flow, reg: { ...(x.flow.reg ?? {}), name, dni, district, id: d, userId, orgId } }; x.stack = [{ s: 'A-06', p: { onboarding: 1 } }]; });
   };
   return (
-    <Screen title={A.t('identity.title', 'Verifica tu identidad')} sub={name || 'Paso 3 de 5'} foot={<><Btn full onClick={() => go(true)}>Continuar</Btn><button className="linkbtn" style={{ alignSelf: "center", fontSize: ".85em" }} onClick={() => go(false)}>Puedes hacerlo después: mientras tanto explora la app</button></>}>
+    <Screen title={A.t('identity.title', 'Verifica tu identidad')} sub={d.name || 'Paso 3 de 5'} foot={<>{err && <div className="errt" role="alert"><Icon n="circle-alert" s="1.2em" />{err}</div>}<Btn full onClick={() => { setErr(''); void go(true); }}>Continuar</Btn><button className="linkbtn" style={{ alignSelf: "center", fontSize: ".85em" }} onClick={() => { setErr(''); void go(false); }}>Puedes hacerlo después: mientras tanto explora la app</button></>}>
       <div className="stack">
         <Steps n={3} of={5} />
-        <div className="sect">Paso 3 de 5 · Tu DNI</div>
+        <div className="sect">Paso 3 de 5 · Tu identidad</div>
         {!LOCAL && <Note icon="info">Versión de prueba abierta al público: usa un DNI y fotos de ejemplo, no los tuyos.</Note>}
-        <Field label="Tu nombre completo" error={err.name}><Inp value={name} onInput={setName} placeholder="Como figura en tu DNI" err={!!err.name} label="Nombre completo" /></Field>
-        <Field label="Número de DNI" error={err.dni}><Inp value={dni} onInput={(v) => setDni(v.replace(/\D/g, '').slice(0, 8))} mode="numeric" placeholder="8 números" err={!!err.dni} label="DNI" /></Field>
+        <IdentityForm value={d} onChange={(v) => { setD(v); setErr(''); }} />
         <Field label="¿En qué distrito está tu chacra?" help="Los compradores solo ven tu distrito (RN-17)."><Sel value={district} onChange={setDistrict} options={districtOptions(d => !d.city || d.code === '040101')} label="Distrito" /></Field>
-        <div className="grid2">
-          <PhotoPick value={ph.front} onChange={(v) => setPh({ ...ph, front: v })} label="DNI · frente" kind="dni" />
-          <PhotoPick value={ph.back} onChange={(v) => setPh({ ...ph, back: v })} label="DNI · reverso" kind="dni" />
-        </div>
-        <Card>
-          <div className="row top">
-            <span className="icirc terra" style={{ width: "3.2em", height: "3.2em" }}><Icon n="circle-user" s="1.6em" /></span>
-            <div className="grow stack tight"><b>Selfie</b><span className="cap">Mira a la cámara, sin lentes ni gorra. La app te guía con la voz.</span>
-              <PhotoPick value={ph.selfie} onChange={(v) => setPh({ ...ph, selfie: v })} label="Selfie" kind="selfie" />
-            </div>
-          </div>
-        </Card>
         <Note icon="lock">Lo vemos solo el equipo de verificación. Sirve para que los compradores confíen en ti.</Note>
       </div>
     </Screen>
@@ -659,10 +641,12 @@ function Zones() {
   for (const a of org.serviceAreas) init[a.district] = a.fee;
   if (onboarding && !org.serviceAreas.length) init[org.district] = 0;
   const [areas, setAreas] = useState<Record<string, number | undefined>>(init);
+  // lo que se escribe tal cual (para poder poner «12,50»); el número va en areas
+  const [feeTxt, setFeeTxt] = useState<Record<string, string>>({});
   const [days, setDays] = useState<number[]>(org.deliveryDays.length ? org.deliveryDays : [2, 4, 6]);
   const [pickup, setPickup] = useState<boolean>(!!org.pickupPoint || onboarding);
   const [point, setPoint] = useState(org.pickupPoint ?? `Chacra en ${placeLabel(org.district)}`);
-  const toggle = (code: string) => { const n = { ...areas }; if (n[code] === undefined) n[code] = DISTRICT_BY_CODE[code].province === prov ? 0 : 10; else delete n[code]; setAreas(n); };
+  const toggle = (code: string) => { const n = { ...areas }; if (n[code] === undefined) n[code] = DISTRICT_BY_CODE[code].province === prov ? 0 : 10; else delete n[code]; setAreas(n); setFeeTxt(t => { const x = { ...t }; delete x[code]; return x; }); };
   const save = () => {
     const list = Object.entries(areas).filter(([, f]) => f !== undefined).map(([district, fee]) => ({ district, fee: fee ?? 0 }));
     const r = A.act('ZONES_SET', { orgId: org.id, areas: list, days, pickupPoint: pickup ? point : '' });
@@ -675,7 +659,7 @@ function Zones() {
     return (
       <div key={code} className="togrow" style={{ flexWrap: "wrap" }}>
         <div className="grow"><div className="b" style={{ fontSize: ".92em" }}>{DISTRICT_BY_CODE[code].name}</div><div className="cap">{sub ?? (on ? (areas[code] ? `Envío ${money(areas[code]!)} por pedido` : 'Envío incluido') : 'No entregas aquí')}</div></div>
-        {on && <div style={{ width: "6.5em" }}><Inp value={String(areas[code] ?? 0)} onInput={(v) => setAreas({ ...areas, [code]: Math.max(0, Number(v.replace(',', '.')) || 0) })} mode="decimal" prefix="S/" label={`Costo de envío a ${DISTRICT_BY_CODE[code].name}`} /></div>}
+        {on && <div style={{ width: "7.6em", flex: "none" }}><Inp value={feeTxt[code] ?? (areas[code] ? String(areas[code]).replace('.', ',') : '')} placeholder="0" onInput={(v) => { const t = v.replace(/[^\d.,]/g, '').slice(0, 7); setFeeTxt({ ...feeTxt, [code]: t }); setAreas({ ...areas, [code]: Math.max(0, Number(t.replace(',', '.')) || 0) }); }} mode="decimal" prefix="S/" label={`Costo de envío a ${DISTRICT_BY_CODE[code].name}`} /></div>}
         <button className={'tog' + (on ? ' on' : '')} role="switch" aria-checked={on ? 'true' : 'false'} aria-label={DISTRICT_BY_CODE[code].name} onClick={() => toggle(code)} />
       </div>
     );
@@ -810,7 +794,12 @@ function Verification() {
   const today = isBuyer
     ? (org.level === 0 ? 'Hoy (nivel 0): puedes ver el catálogo, pero no hacer pedidos.' : `Hoy (nivel ${org.level}): hasta ${money(lim.perOrder)} por pedido${lim.monthly ? ` y ${money(lim.monthly)} al mes` : ''}${lim.prepay ? ', pagando antes de la entrega' : ''}.${org.level < 3 ? ` Nivel ${org.level + 1}: ${money(nextLim.perOrder)} por pedido${nextLim.cash ? ' y puedes pagar al recibir' : ''}.` : ''}`)
     : (org.level === 0 ? 'Hoy (nivel 0): puedes explorar, pero no publicar todavía.' : `Hoy (nivel ${org.level} · ${LEVEL_NAME[org.level]}): hasta ${lim.listings ?? 'sin tope de'} publicaciones${lim.monthly ? ` y ${money(lim.monthly)} al mes` : ''}, con tope de ${money(lim.perOrder)} por pedido.`);
-  const submit = (level: number) => A.sheet(<SubmitLevel level={level} items={items.filter(i => i.level === level && !i.auto && !i.optional)} orgId={org.id} />);
+  // la identidad (DNI y rostro en tres ángulos) tiene su propia pantalla con la cámara guiada
+  const submit = (level: number, respond?: string) => {
+    const its = items.filter(i => i.level === level && !i.auto && !i.optional);
+    if (its.some(i => i.key === 'dni')) { A.go('ID-01', { level, respond }); return; }
+    A.sheet(<SubmitLevel level={level} items={its} orgId={org.id} respond={respond} />);
+  };
   return (
     <Screen title={isBuyer ? 'Verifica tu negocio' : 'Tu verificación'} sub={org.name}>
       <div className="stack">
@@ -844,7 +833,7 @@ function Verification() {
               <div className="row between"><b className="bodym">Expediente del nivel {l}</b><Chip tone={CASE_LABEL[k.status].tone}>{CASE_LABEL[k.status].l}</Chip></div>
               <div className="cap mt">Enviado el {dateShort(k.submittedAt)} {hhmm(k.submittedAt)}{k.decision ? ` · ${k.decision.reason || 'sin observaciones'}` : ''}</div>
               {k.status === 'REJECTED' && !k.appealed && <div className="mt"><Btn sm kind="sec" onClick={() => { const r = A.act('VERIF_APPEAL', { caseId: k.id, text: 'Pido que otra persona revise mi expediente.' }, { ok: 'Apelación enviada: la revisa otra persona.' }); void r; }}>Apelar una vez</Btn></div>}
-              {k.status === 'NEEDS_INFO' && <div className="mt"><Btn sm kind="dark" onClick={() => A.sheet(<SubmitLevel level={l} items={items.filter(i => i.level === l && !i.auto && !i.optional)} orgId={org.id} respond={k.id} />)}>Enviar lo que falta</Btn></div>}
+              {k.status === 'NEEDS_INFO' && <div className="mt"><Btn sm kind="dark" onClick={() => submit(l, k.id)}>Enviar lo que falta</Btn></div>}
             </Card>
           );
         })}

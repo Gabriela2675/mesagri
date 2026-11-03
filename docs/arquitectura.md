@@ -110,9 +110,41 @@ dos cargos, RF-PAY-05).
 - Cuentas de cobro y códigos de entrega cifrados con **AES-256-GCM** (`DATA_KEY`); la base guarda
   además los últimos 4 dígitos y la huella del código.
 - Los códigos de entrega, recojo y QR los genera el servidor al azar.
-- DNI, selfie y documentos solo con enlace firmado de un minuto; cada acceso queda en auditoría.
+- DNI, fotos del rostro y documentos solo con enlace firmado de un minuto; cada acceso queda en auditoría.
 - Usuario de MySQL con permisos solo sobre la base `mesagri`; MySQL escucha solo en `127.0.0.1`.
-- Límite de intentos por IP y por celular, cabeceras de seguridad y CSP.
+- Límite de intentos por IP y por celular, cabeceras de seguridad y CSP (con `'wasm-unsafe-eval'` para el lector de texto del panel, que corre en WebAssembly).
+
+## Identidad con visión por computadora
+
+- **Reglas** (`packages/shared/src/identity.ts`): dígito de verificación del DNI (pesos 3, 2, 7, 6,
+  5, 4, 3, 2 y módulo 11), comparación de nombres sin orden ni tildes (MATCH, PARTIAL, MISMATCH),
+  lectura del código del reverso del DNI (MRZ ICAO 9303, formato TD1, con sus dígitos de control,
+  corrección de confusiones de lectura y la Ñ como NXX), ángulos del rostro (de frente hasta 12°,
+  girado desde 18°) y alertas del expediente. El expediente guarda `identity` (DNI, dígito, nombre,
+  fotos del DNI, las tres del rostro con su revisión, la consulta del DNI y la revisión del panel).
+- **Acciones**: `VERIF_SUBMIT` y `VERIF_RESPOND` llevan `identity` (las fotos pasan a evidencias);
+  `VERIF_IDCHECK` la hace solo el servidor (resultado de la consulta del DNI); `VERIF_AUTOCHECK`
+  la manda el panel (lo que leyó en las fotos), solo verificación o administración general.
+- **Consulta del DNI** (`apps/api/src/identity`): con `DNI_API_URL` y `DNI_API_TOKEN`, un
+  proveedor de pago por consulta (lee los nombres como los llame cada uno: `nombres`,
+  `apellido_paterno`, `first_name`, `fullName`...; si informa el fallecimiento, lo usa); la consulta
+  se guarda 30 días en `identity_lookups`. Sin proveedor, el padrón de prueba. Al llegar un
+  expediente con identidad, el servidor consulta y aplica `VERIF_IDCHECK`. La pre-consulta
+  (`POST /identity/dni-check`) pide el permiso de registro o una sesión, tiene límite de intentos y
+  no devuelve el nombre oficial; la máscara de privacidad tampoco se lo manda a la persona.
+- **En el celular** (`apps/web/src/app/vision`, `screens/identity.tsx`): face-api (TensorFlow en el
+  navegador, WebGL o procesador) con el detector chico y los 68 puntos; el giro sale de la posición
+  de la nariz entre los bordes de la cara. La cámara en vivo (`getUserMedia`) no tiene espejo, así
+  que se sabe hacia qué lado giró; con una foto del celular basta que las dos giradas vayan a lados
+  opuestos.
+- **En el panel** (`screens/idreview.tsx`): detector fino y huella del rostro (distancia euclidiana;
+  hasta 0,45 muy parecido, más de 0,58 poco) y Tesseract (inglés, solo A-Z, 0-9 y «<») para el
+  código del reverso, probando recortes, contraste y la foto al revés hasta que los dígitos de
+  control cuadren. Los modelos se copian de `node_modules` a `/vision` y `/ocr` al compilar (la
+  versión autónoma lleva solo los del celular).
+- **Pruebas**: `identity.test.ts` (reglas y acciones), la API con un proveedor de mentira, y
+  `e2e/identidad.spec.ts` con la cámara de Chromium de pruebas pasando un video con las tres fotos
+  de ejemplo (un rostro 3D: el escaneo «Lee Perry-Smith» de Infinite-Realities, CC BY 3.0).
 
 ## Tareas programadas (14.7)
 

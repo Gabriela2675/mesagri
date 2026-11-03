@@ -21,6 +21,7 @@ import { districtName, placeLabel } from '@mesagri/shared/ubigeo';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { auth, api, setTeamKey, type AdminSetup } from '../net';
 import { FirstAccess } from './access';
+import { IdentityReview } from './idreview';
 import { appUrl } from '../routes';
 import { docPdf } from '../pdf';
 import type { World, Org, User, VerifCase, SubOrder, Dispute, Listing, AdminRole, Complaint } from '@mesagri/shared/types';
@@ -446,7 +447,7 @@ function Inbox() {
                 <td data-l="Solicitante"><b>{o?.legalName && o.type === 'BUYER' ? o.legalName : o?.name}</b></td>
                 <td data-l="Distrito">{districtName(o?.district)}</td>
                 <td data-l="Pide">{levelAsked(w, k)}</td>
-                <td data-l="Evidencias" style={{ maxWidth: "300px" }}>{(() => { const l = [...new Set(k.evidence.filter(e => e.key !== 'dni2').map(e => e.label.split(' · ')[0]))]; return l.slice(0, 3).join(', ') + (l.length > 3 ? '…' : ''); })()}</td>
+                <td data-l="Evidencias" style={{ maxWidth: "300px" }}>{(() => { const l = [...new Set(k.evidence.filter(e => e.key !== 'dni2').map(e => e.key.startsWith('rostro') ? 'Rostro (3 ángulos)' : e.label.split(' · ')[0]))]; return l.slice(0, 3).join(', ') + (l.length > 3 ? '…' : ''); })()}</td>
                 <td data-l="Alertas">{k.alerts.length ? k.alerts.map(a => <Pill key={a} tone={/RUC|TEL|DNI/.test(a) ? 'danger' : 'warn'}>{a}</Pill>) : <Pill>Ninguna</Pill>}</td>
                 <td data-l="Asignado">{k.assignedTo ? adminName(w, k.assignedTo) : 'Sin asignar'}</td>
                 <td data-l="">{['APPROVED', 'REJECTED'].includes(k.status) ? <Pill tone={k.status === 'APPROVED' ? '' : 'danger'}>{k.status === 'APPROVED' ? 'Aprobado' : 'Rechazado'}</Pill> : k.assignedTo ? <Btn sm kind={mine ? 'dark' : 'sec'} onClick={(e: any) => { e.stopPropagation(); A.go('W-04', { id: k.id }); }}>Abrir</Btn> : <Btn sm kind="sec" onClick={(e: any) => { e.stopPropagation(); take(k); }}>Tomar</Btn>}</td>
@@ -484,7 +485,9 @@ function CaseFile() {
   const dupPhone = u ? Object.values(w.users).some(x => x.id !== u.id && x.phone === u.phone) : false;
   const acct = o.payout[0];
   const contrast: [string, string, string, ReactNode][] = [
-    ['Nombre y DNI', `${u?.name ?? o.name} · ${maskDni(u?.dni)}`, 'Consulta a RENIEC (simulada)', <Pill>Coincide</Pill>],
+    k.identity
+      ? ['Nombre y DNI', `${k.identity.name} · ${maskDni(k.identity.dni)}`, k.identity.registry ? (k.identity.registry.source === 'PROVEEDOR' ? `RENIEC (${k.identity.registry.provider ?? 'proveedor'})` : k.identity.registry.source === 'PADRON_PRUEBA' ? 'Padrón de prueba (demo)' : 'Sin consulta') : 'Consultando...', <Pill tone={k.identity.registry?.status === 'MATCH' ? '' : k.identity.registry?.status === 'PARTIAL' || !k.identity.registry || k.identity.registry.status === 'UNAVAILABLE' || k.identity.registry.status === 'NOT_FOUND' ? 'warn' : 'danger'}>{({ MATCH: 'Coincide', PARTIAL: 'En parte', NAME_MISMATCH: 'No coincide', NOT_FOUND: 'No figura', DECEASED: 'Fallecido', UNAVAILABLE: 'Sin respuesta' } as Record<string, string>)[k.identity.registry?.status ?? ''] ?? '—'}</Pill>]
+      : ['Nombre y DNI', `${u?.name ?? o.name} · ${maskDni(u?.dni)}`, 'Consulta a RENIEC (simulada)', <Pill>Coincide</Pill>],
     ...(o.ruc ? [['RUC', `${maskRuc(o.ruc)} · ${o.legalName ?? o.name}`, 'Padrón de la SUNAT (de prueba)', pad ? <Pill tone={pad.estado === 'ACTIVO' && pad.condicion === 'HABIDO' ? '' : 'danger'}>{pad.estado} · {pad.condicion}</Pill> : <Pill tone="gray">Sin datos</Pill>] as [string, string, string, ReactNode]] : []),
     ...(farm.length ? [['Chacra', `${farm.map(f => `${String(f.areaHa).replace('.', ',')} ha · ${districtName(f.district)}`).join(' · ')}`, 'GPS de las fotos (app)', <Pill tone={farm.some(f => f.gps === 'APP') ? '' : 'warn'}>{farm.some(f => f.gps === 'APP') ? 'Dentro del área' : 'Ubicación manual'}</Pill>] as [string, string, string, ReactNode]] : []),
     ['Celular', u?.phone ? `${u.phone.slice(0, 3)} ••• ${u.phone.slice(-3)}` : '—', 'Otras cuentas de Mesagri', <Pill tone={dupPhone ? 'danger' : ''}>{dupPhone ? 'Repetido' : 'Único'}</Pill>],
@@ -508,11 +511,12 @@ function CaseFile() {
             <div className="row between"><h2>Evidencias</h2><Pill>{k.evidence.length} archivos</Pill></div>
             <div className="wphotos">{k.evidence.map(e => <figure key={e.key + e.label}><div className="photo">{e.photoId ? <Photo id={e.photoId} /> : <Icon n={/foto|chacra|local|selfie/i.test(e.label) ? 'camera' : 'file-text'} s="32" w={1.6} />}</div><figcaption>{e.label}{e.detail ? ` · ${e.detail}` : ''}</figcaption></figure>)}</div>
           </div>
+          {k.identity && <IdentityReview k={k} />}
           <div className="wcard">
             <h2>Contraste de datos</h2>
             <table className="wtable resp"><thead><tr><th>Dato</th><th>Declarado</th><th>Fuente</th><th>Resultado</th></tr></thead>
               <tbody>{contrast.map(([a, b, c, d]) => <tr key={a}><td data-l="Dato">{a}</td><td data-l="Declarado">{b}</td><td data-l="Fuente">{c}</td><td data-l="Resultado">{d}</td></tr>)}</tbody></table>
-            <p className="wnote">Las consultas a RENIEC y a la SUNAT son simuladas en la demo. Ver un documento personal queda en auditoría (Ley 29733).</p>
+            <p className="wnote">{k.identity?.registry?.source === 'PROVEEDOR' ? 'El DNI se consultó en RENIEC por el proveedor configurado; la SUNAT es de prueba.' : 'Las consultas a RENIEC y a la SUNAT son de prueba en la demo.'} Ver un documento personal queda en auditoría (Ley 29733).</p>
           </div>
         </div>
         <div className="stack">

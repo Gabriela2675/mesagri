@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import { reg } from './registry';
 import { useApp, type AppCtx } from '../ctx';
 import { Icon, Btn, Inp, Sel, Photo } from '../ui/kit';
+import { IdentityReview } from './idreview';
 import { WebFrame, Pill, Tabs, Kpi, WSearch, Row, Columns, Meter, norm, downloadCsv, maskRuc, adminName, roleOf, casesOf, AgePill, pilotIndicators } from './admin';
 import { PRODUCTS, product, CATEGORY_LABEL, allProducts } from '@mesagri/shared/catalog';
 import { carrierStats, warehouseOccupancy, expiringDocs, expiredDocs, sameDay } from '@mesagri/shared/queries';
@@ -469,7 +470,7 @@ function PartnerDetail({ o, kind }: { o: Org; kind: 'WAREHOUSE' | 'CARRIER' }) {
   const user = Object.values(w.users).find(u => u.orgId === o.id);
   const score = Math.round((checks.filter(Boolean).length / checks.length) * 100);
   const docs: (DocItem & { issuer?: string })[] = isWh ? o.warehouse!.docs : [
-    { kind: 'DNI', label: 'DNI y selfie', status: 'OK', note: 'Vigente' },
+    { kind: 'DNI', label: 'DNI y rostro en 3 ángulos', status: 'OK', note: 'Vigente' },
     { kind: 'LIC', label: `Licencia ${o.carrier!.driverLicense.cls}`, status: 'OK', expiresOn: o.carrier!.driverLicense.expiresOn },
     ...o.carrier!.vehicle.docs,
   ];
@@ -511,6 +512,7 @@ function PartnerDetail({ o, kind }: { o: Org; kind: 'WAREHOUSE' | 'CARRIER' }) {
         </div>
       </div>
       {photos.length > 0 && <div className="wphotos">{photos.map(e => <figure key={e.key}><div className="photo"><Photo id={e.photoId} /></div><figcaption>{e.label}</figcaption></figure>)}</div>}
+      {(k ?? lastCase(w, o.id))?.identity && <IdentityReview k={(k ?? lastCase(w, o.id))!} />}
       {k ? (
         <div className="wcard">
           <div className="row between wrap"><h2>Decisión · pide {isWh ? 'A' : 'T'}{k.targetLevel}</h2><span className="cap">Expediente enviado {ago(k.submittedAt, A.now)} · <AgePill t={k.submittedAt} /></span></div>

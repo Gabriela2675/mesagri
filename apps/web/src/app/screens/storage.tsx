@@ -18,6 +18,7 @@ import { DISTRICT_BY_CODE, placeLabel, districtName } from '@mesagri/shared/ubig
 import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { RoleHead, RucLookup, regGet, regSet, districtOptions } from './onboarding';
+import { IdentityForm, identityProblem, confirmIdentity, idPayload, emptyId, type IdDraft } from './identity';
 import { StatementView, MESAGRI_YAPE } from './farmer2';
 import { PrefsSheet, NameSheet, PermsSheet } from './common';
 import { canAskPermissions } from '../platform';
@@ -395,7 +396,7 @@ function WhBusiness() {
 
 /* ---------- C-02 · Documentos ---------- */
 const WH_DOCS = [
-  { k: 'DNI', l: 'DNI del representante', s: 'Foto por ambos lados y selfie', exp: false },
+  { k: 'DNI', l: 'DNI del representante', s: 'DNI por ambos lados y 3 fotos del rostro', exp: false },
   { k: 'PODER', l: 'Vigencia de poder (SUNARP)', s: 'Emitida hace menos de 30 días', exp: false },
   { k: 'LICENCIA', l: 'Licencia de funcionamiento', s: 'Municipalidad provincial', exp: false },
   { k: 'ITSE', l: 'Certificado ITSE', s: 'Defensa Civil · con fecha de vencimiento', exp: true },
@@ -409,9 +410,12 @@ function WhDocs() {
   const [docs, setDocs] = useState<Record<string, { photo?: string; exp?: string }>>(R.whDocs ?? {});
   const [open, setOpen] = useState<string>('');
   const [processes, setProcesses] = useState<boolean>(!!R.whDocs?.SENASA);
+  // el representante: nombre, DNI con su dígito, fotos del DNI y del rostro en tres ángulos
+  const [idd, setIdd] = useState<IdDraft>(() => R.whId ?? emptyId(R.name ?? '', ''));
+  const idOk = identityProblem(idd) === '';
   const required = WH_DOCS.filter(d => !d.optional || processes);
-  const ready = required.every(d => docs[d.k]?.photo && (!d.exp || docs[d.k]?.exp));
-  const next = () => { regSet(A, { whDocs: docs }); A.go('C-03'); };
+  const ready = required.every(d => (d.k === 'DNI' ? idOk : docs[d.k]?.photo && (!d.exp || docs[d.k]?.exp)));
+  const next = async () => { if (!(await confirmIdentity(A, idd))) return; regSet(A, { whDocs: docs, whId: idd, name: idd.name.replace(/\s+/g, ' ').trim() }); A.go('C-03'); };
   return (
     <Screen title="Crear cuenta" foot={<Btn full kind="forest" onClick={next} disabled={!ready} why={!ready ? 'Sube cada documento con su fecha de vencimiento' : undefined}>Continuar</Btn>}>
       <div className="stack">
@@ -420,7 +424,7 @@ function WhDocs() {
         <Card><div className="list">
           {required.map(d => {
             const v = docs[d.k];
-            const ok = !!v?.photo && (!d.exp || !!v?.exp);
+            const ok = d.k === 'DNI' ? idOk : !!v?.photo && (!d.exp || !!v?.exp);
             return (
               <div key={d.k} className="stack tight" style={{ padding: ".6em 0" }}>
                 <div className="row top">
@@ -428,7 +432,8 @@ function WhDocs() {
                   <div className="grow"><b className="bodym">{d.l}</b><div className="cap">{v?.exp ? `Vigente hasta el ${dateNum(new Date(v.exp + 'T12:00:00-05:00').getTime())}` : d.s}</div></div>
                   <button className="chip terra" style={{ minHeight: "2.4em" }} onClick={() => setOpen(open === d.k ? '' : d.k)}>{ok ? 'Ver' : 'Subir'}</button>
                 </div>
-                {open === d.k && <div className="stack tight" style={{ paddingLeft: "2.6em" }}>
+                {open === d.k && d.k === 'DNI' && <div className="stack tight"><IdentityForm value={idd} onChange={setIdd} nameLabel="Nombre completo del representante" compact /></div>}
+                {open === d.k && d.k !== 'DNI' && <div className="stack tight" style={{ paddingLeft: "2.6em" }}>
                   <PhotoPick value={v?.photo} onChange={(p) => setDocs({ ...docs, [d.k]: { ...v, photo: p } })} label={d.l} kind={d.k === 'FOTOS' ? 'local' : 'dni'} />
                   {d.exp && <Field label="Vence el"><input className="inp" type="date" value={v?.exp ?? ''} onChange={(e: any) => setDocs({ ...docs, [d.k]: { ...v, exp: e.currentTarget.value } })} aria-label="Fecha de vencimiento" /></Field>}
                 </div>}
@@ -497,7 +502,7 @@ function WhAgreement() {
     A.act('CARRIER_AGREEMENT', {}, { as: userId, quiet: true });
     const evidence: Evidence[] = WH_DOCS.filter(d => R.whDocs?.[d.k]?.photo).map(d => ({ key: d.k.toLowerCase(), label: d.l, photoId: R.whDocs[d.k].photo, detail: R.whDocs[d.k].exp ? `Vence ${R.whDocs[d.k].exp}` : undefined }));
     evidence.push({ key: 'visita', label: `Visita agendada para el ${dateShort(visit)} ${hhmm(visit)}` });
-    A.act('VERIF_SUBMIT', { caseId: 'case-' + uid(), orgId, targetLevel: 2, evidence }, { as: userId, quiet: true });
+    A.act('VERIF_SUBMIT', { caseId: 'case-' + uid(), orgId, targetLevel: 2, evidence, ...(R.whId ? { identity: idPayload(R.whId) } : {}) }, { as: userId, quiet: true });
     A.patch(d => { d.userId = userId; d.stack = [{ s: 'C-05' }]; d.flow = {}; });
     A.toast('Enviamos tu almacén a verificación. Mientras tanto apareces como «próximamente».');
   };

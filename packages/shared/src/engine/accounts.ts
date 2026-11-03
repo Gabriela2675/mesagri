@@ -1,9 +1,10 @@
 /*
  * Cuentas, verificación por niveles y perfiles (6.1, 6.2, 10, RN-01, RN-02, RN-16, RN-18, RN-19, RN-28).
  */
-import type { Org, User, Evidence, VerifCase, PayoutAccount, Prefs } from '../types';
+import type { Org, User, Evidence, VerifCase, PayoutAccount, Prefs, CaseIdentity, FaceShot, FacePose, RegistryCheck, DocReview } from '../types';
 import { on, fail, audit, notify, requireMember, requireAdmin, getOrg, must, Ctx } from './core';
 import { isRucValid, isDniValid, isPhoneValid, initials, licenseMatches, VCLASS_INFO } from '../rules';
+import { identityAlerts, identityEvidence, isIdentityAlert, IDENTITY_KEYS, faceMatchLevel, ID_ALERTS } from '../identity';
 import { DISTRICT_BY_CODE } from '../ubigeo';
 import { addMonths } from '../time';
 import { PRODUCT_BY_ID } from '../catalog';
@@ -257,6 +258,37 @@ export function computeAlerts(w: Ctx['w'], org: Org): string[] {
   return [...new Set(alerts)];
 }
 
+/* ---------- Identidad: DNI, nombre y fotos del DNI y del rostro (lo que llega del celular, limpio) ---------- */
+const PHOTO_ID = /^[A-Za-z0-9:_.-]{3,80}$/;
+const num = (v: unknown, lo: number, hi: number) => (Number.isFinite(Number(v)) ? Math.max(lo, Math.min(hi, Math.round(Number(v) * 10) / 10)) : undefined);
+function cleanIdentity(raw: any, t: number): CaseIdentity {
+  const dni = String(raw?.dni ?? '').trim();
+  if (!isDniValid(dni)) fail('BAD_DNI', 'El DNI tiene 8 números.');
+  const name = String(raw?.name ?? '').replace(/\s+/g, ' ').trim();
+  if (name.length < 5 || name.split(' ').length < 2) fail('BAD_NAME', 'Escribe el nombre completo, como figura en el DNI.');
+  const digit = String(raw?.digit ?? '').trim().toUpperCase().slice(0, 1);
+  if (digit && !/^[0-9A-K]$/.test(digit)) fail('BAD_DIGIT', 'El dígito de verificación es un número (o una letra) que va después del guion.');
+  const photo = (v: unknown) => (typeof v === 'string' && PHOTO_ID.test(v) ? v : undefined);
+  const faces: FaceShot[] = [];
+  for (const f of Array.isArray(raw?.faces) ? raw.faces.slice(0, 3) : []) {
+    const pose = (['FRONT', 'RIGHT', 'LEFT'] as FacePose[]).find(x => x === f?.pose);
+    const photoId = photo(f?.photoId);
+    if (!pose || !photoId || faces.some(x => x.pose === pose)) continue;
+    const a = f?.auto;
+    faces.push({
+      pose, photoId, live: !!f?.live, at: Number.isFinite(Number(f?.at)) ? Number(f.at) : t,
+      auto: a ? { ok: !!a.ok, faces: Math.max(0, Math.min(9, Math.round(Number(a.faces) || 0))), yaw: num(a.yaw, -90, 90), light: num(a.light, 0, 255), sharp: num(a.sharp, 0, 9999), note: a.note ? String(a.note).slice(0, 120) : undefined } : undefined,
+    });
+  }
+  return { dni, digit: digit || undefined, name: name.slice(0, 120), dniFront: photo(raw?.dniFront), dniBack: photo(raw?.dniBack), faces };
+}
+/** Recalcula las alertas de identidad del expediente (las demás alertas quedan). */
+function refreshIdentityAlerts(c: Ctx, k: VerifCase) {
+  if (!k.identity) return;
+  const holder = Object.values(c.w.users).find(u => u.orgId === k.orgId && c.w.orgs[k.orgId]?.memberIds[0] === u.id);
+  k.alerts = [...new Set([...k.alerts.filter(a => !isIdentityAlert(a)), ...identityAlerts(k.identity, c.t, holder?.dni)])];
+}
+
 on('VERIF_SUBMIT', (c) => {
   const p = c.e.p;
   const o = getOrg(c.w, p.orgId);
@@ -266,14 +298,25 @@ on('VERIF_SUBMIT', (c) => {
   if (!(target >= 1 && target <= 3)) fail('BAD_LEVEL', 'Nivel no válido.');
   if (target <= current) fail('ALREADY', 'Ya tienes ese nivel.');
   if (openCaseFor(c.w, o.id, target)) fail('OPEN_CASE', 'Ya enviaste este expediente: lo estamos revisando.');
-  const raw = (p.evidence ?? []) as (Evidence & { flag?: string })[];
-  if (!raw.length) fail('NO_EVIDENCE', 'Agrega al menos un documento.');
-  const evidence: Evidence[] = raw.map(x => ({ key: String(x.key), label: String(x.label ?? ''), detail: x.detail, photoId: x.photoId, ok: x.ok }));
+  const identity = p.identity ? cleanIdentity(p.identity, c.t) : undefined;
+  const raw = ((p.evidence ?? []) as (Evidence & { flag?: string })[]).filter(x => !identity || !IDENTITY_KEYS.has(String(x.key)));
+  if (!raw.length && !identity) fail('NO_EVIDENCE', 'Agrega al menos un documento.');
+  const evidence: Evidence[] = [...(identity ? identityEvidence(identity) : []), ...raw.map(x => ({ key: String(x.key), label: String(x.label ?? ''), detail: x.detail, photoId: x.photoId, ok: x.ok }))];
+  // quien manda su identidad es el titular: si su usuario no tenía DNI, queda el que mandó (para ver repetidos)
+  if (identity) {
+    const holder = c.w.users[o.memberIds[0]];
+    if (holder && !holder.dni && holder.id === c.a.id) {
+      if (Object.values(c.w.users).some(u => u.id !== holder.id && u.dni === identity.dni)) fail('DNI_TAKEN', 'Ese DNI ya pertenece a otra cuenta (RN-18).');
+      holder.dni = identity.dni;
+    }
+  }
   const kase: VerifCase = {
     id: p.caseId, orgId: o.id, kind: o.type === 'MESAGRI' ? 'FARMER' : (o.type as any), targetLevel: target, status: 'SUBMITTED',
     submittedAt: c.t, evidence, alerts: [...new Set([...computeAlerts(c.w, o), ...raw.map(x => x.flag).filter((f): f is string => !!f)])], history: [{ at: c.t, by: c.a.id, text: 'Envió el expediente' }],
+    ...(identity ? { identity } : {}),
   };
   c.w.cases[kase.id] = kase;
+  refreshIdentityAlerts(c, kase);
   notify(c, 'ADMIN', 'VERIFICATION', 'Expediente nuevo', `${o.name} pide ${levelLabel(o, target)}`, { screen: 'W-04', params: { id: kase.id } });
   notify(c, o.id, 'VERIFICATION', 'Recibimos tus documentos', 'Una persona del equipo los revisa y responde en 48 h.');
   return { caseId: kase.id };
@@ -361,11 +404,65 @@ on('VERIF_RESPOND', (c) => {
   const k = must(c.w.cases[c.e.p.caseId], 'NOT_FOUND', 'No encontramos el expediente.');
   requireMember(c.a, k.orgId);
   if (k.status !== 'NEEDS_INFO') fail('NOT_WAITING', 'Este expediente no espera respuesta.');
-  const ev = (c.e.p.evidence ?? []) as Evidence[];
+  const identity = c.e.p.identity ? cleanIdentity(c.e.p.identity, c.t) : undefined;
+  const ev = ((c.e.p.evidence ?? []) as Evidence[]).filter(x => !identity || !IDENTITY_KEYS.has(String(x.key))).map(x => ({ key: String(x.key), label: String(x.label ?? ''), detail: x.detail, photoId: x.photoId, ok: x.ok }));
+  if (identity) {
+    // la identidad nueva reemplaza a la anterior (fotos y revisión automática se hacen de nuevo)
+    k.evidence = [...identityEvidence(identity), ...k.evidence.filter(e => !IDENTITY_KEYS.has(e.key))];
+    k.identity = identity;
+    refreshIdentityAlerts(c, k);
+  }
   k.evidence.push(...ev);
   k.status = 'SUBMITTED';
   k.history.push({ at: c.t, by: c.a.id, text: `Respondió: ${String(c.e.p.text ?? 'envió lo pedido').slice(0, 200)}` });
 });
+
+/** Resultado de la consulta del DNI que hace el servidor (RENIEC por un proveedor o el padrón de prueba). */
+on('VERIF_IDCHECK', (c) => {
+  if (c.a.id !== 'system') fail('FORBIDDEN', 'Esta consulta la hace solo el servidor.');
+  const k = must(c.w.cases[c.e.p.caseId], 'NOT_FOUND', 'No encontramos el expediente.');
+  if (!k.identity) fail('NO_IDENTITY', 'El expediente no tiene identidad.');
+  const r = c.e.p.registry ?? {};
+  const STATUS = ['MATCH', 'PARTIAL', 'NAME_MISMATCH', 'NOT_FOUND', 'DECEASED', 'UNAVAILABLE'];
+  if (!STATUS.includes(r.status)) fail('BAD_STATUS', 'Resultado no válido.');
+  const tri = (v: unknown) => (v === true ? true : v === false ? false : null);
+  const reg: RegistryCheck = {
+    status: r.status, source: (['PADRON_PRUEBA', 'PROVEEDOR', 'SIN_CONSULTA'].includes(r.source) ? r.source : 'SIN_CONSULTA'),
+    provider: r.provider ? String(r.provider).slice(0, 60) : undefined, officialName: r.officialName ? String(r.officialName).slice(0, 160) : undefined,
+    score: num(r.score, 0, 1), digitOk: tri(r.digitOk), deceased: tri(r.deceased), at: c.t, note: r.note ? String(r.note).slice(0, 200) : undefined,
+  };
+  if (String(c.e.p.dni ?? '') !== k.identity.dni) fail('STALE', 'La consulta era de otro DNI.');
+  k.identity.registry = reg;
+  refreshIdentityAlerts(c, k);
+  const label: Record<string, string> = { MATCH: 'el nombre coincide', PARTIAL: 'el nombre coincide en parte', NAME_MISMATCH: 'el nombre NO coincide', NOT_FOUND: 'el DNI no figura', DECEASED: 'el DNI es de una persona fallecida', UNAVAILABLE: 'no se pudo consultar' };
+  k.history.push({ at: c.t, by: 'system', text: `Consulta del DNI (${reg.source === 'PROVEEDOR' ? 'RENIEC' : reg.source === 'PADRON_PRUEBA' ? 'padrón de prueba' : 'sin consulta'}): ${label[reg.status]}` });
+  if (reg.status === 'DECEASED' || reg.status === 'NAME_MISMATCH') notify(c, 'ADMIN', 'VERIFICATION', 'Revisa una identidad', `${c.w.orgs[k.orgId]?.name}: ${label[reg.status]}`, { screen: 'W-04', params: { id: k.id } });
+});
+
+/** Lo que leyó el panel en las fotos: código del reverso del DNI, número en el frente y parecido del rostro. */
+on('VERIF_AUTOCHECK', (c) => {
+  requireAdmin(c.a, 'VERIFIER', 'GENERAL');
+  const k = must(c.w.cases[c.e.p.caseId], 'NOT_FOUND', 'No encontramos el expediente.');
+  if (!k.identity) fail('NO_IDENTITY', 'El expediente no tiene identidad.');
+  const r = c.e.p.review ?? {};
+  const s = (v: unknown, n: number) => (v === undefined || v === null || v === '' ? undefined : String(v).replace(/[^A-Za-zÑñ0-9 <-]/g, '').slice(0, n));
+  const m = r.mrz;
+  const fm = r.faceMatch && Number.isFinite(Number(r.faceMatch.distance)) ? { distance: Math.round(Number(r.faceMatch.distance) * 1000) / 1000, level: faceMatchLevel(Number(r.faceMatch.distance)) } : r.faceMatch === null ? null : undefined;
+  const review: DocReview = {
+    at: c.t, by: c.a.id,
+    mrz: m ? { read: !!m.read, checks: !!m.checks, dni: s(m.dni, 8), digit: s(m.digit, 1), surnames: s(m.surnames, 80), given: s(m.given, 80), birth: s(m.birth, 6), expiry: s(m.expiry, 6), sex: s(m.sex, 1) } : undefined,
+    frontDni: r.frontDni === true ? true : r.frontDni === false ? false : r.frontDni === null ? null : undefined,
+    faceMatch: fm,
+    faces: Array.isArray(r.faces) ? r.faces.slice(0, 3).filter((f: any) => ['FRONT', 'RIGHT', 'LEFT'].includes(f?.pose)).map((f: any) => ({ pose: f.pose, ok: !!f.ok, yaw: num(f.yaw, -90, 90) })) : undefined,
+    note: r.note ? String(r.note).slice(0, 200) : undefined,
+  };
+  k.identity.review = review;
+  refreshIdentityAlerts(c, k);
+  const parts = [review.mrz ? (review.mrz.read ? `código del DNI leído${review.mrz.checks ? '' : ' con dudas'}` : 'código del DNI sin leer') : '', fm ? `rostro ${fm.level.toLowerCase()} parecido al DNI` : ''].filter(Boolean);
+  k.history.push({ at: c.t, by: c.a.id, text: `Revisión automática${parts.length ? ': ' + parts.join(', ') : ''}` });
+  audit(c, c.a.id, 'REVISIÓN AUTOMÁTICA DE IDENTIDAD', k.orgId, parts.join(' · ') || 'sin resultados');
+});
+void ID_ALERTS;
 
 /* ---------- Transportista y almacén: revisión, capacitación, disponibilidad ---------- */
 on('CARRIER_INSPECTION', (c) => {

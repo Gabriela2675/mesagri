@@ -1,0 +1,9 @@
+Fotos de ejemplo para la versión de prueba de Mesagri (identidad).
+
+- rostro-frente.jpg, rostro-derecha.jpg, rostro-izquierda.jpg: un rostro 3D de frente y girando a
+  su derecha y a su izquierda (unos 32 grados). Es el escaneo «Lee Perry-Smith» de
+  Infinite-Realities (licencia CC BY 3.0), dibujado con three.js. No es una persona registrada.
+- dni-frente.jpg, dni-reverso.jpg: un DOCUMENTO DE PRUEBA de Mesagri marcado «MUESTRA SIN VALOR»
+  (no es un DNI ni copia su diseño). El reverso lleva un código de 3 líneas en el formato TD1 de la
+  norma ICAO 9303 para probar la lectura automática: DNI 44871209, dígito 1, Rubén Darío Huamaní
+  Condori (persona de prueba del padrón de la demo).

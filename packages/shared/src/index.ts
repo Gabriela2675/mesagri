@@ -10,6 +10,7 @@ export * from './time';
 export * from './format';
 export * from './ids';
 export * from './rules';
+export * from './identity';
 export * from './queries';
 export * from './voice';
 export * from './i18n-keys';

@@ -18,6 +18,7 @@ import { uid, isSealed, codeMatches, CODE_SALT } from '@mesagri/shared/ids';
 import { orgName, userOfOrg, notifsFor, itemsShort, PAY_LABEL, sacos, withDistrict } from '../helpers';
 import { placeLabel, districtName } from '@mesagri/shared/ubigeo';
 import { regGet, regSet, RoleHead, RucLookup, CodeInput, districtOptions } from './onboarding';
+import { IdentityForm, identityProblem, confirmIdentity, idPayload, emptyId, type IdDraft } from './identity';
 import { StatementView } from './farmer2';
 import { RenewDoc } from './storage';
 import { callPhone, openMap } from '../platform';
@@ -95,25 +96,24 @@ function CarrierDriver() {
   const A = useApp();
   const R = regGet(A);
   const C = R.car ?? {};
-  const [name, setName] = useState<string>(C.driverName ?? (C.kind === 'PERSONA' ? (R.legalName ?? '') : ''));
-  const [dni, setDni] = useState<string>(C.dni ?? '');
-  const [dniPh, setDniPh] = useState<string | undefined>(C.dniPhoto);
-  const [selfie, setSelfie] = useState<string | undefined>(C.selfie);
+  // quien maneja: nombre, DNI con su dígito, fotos del DNI y del rostro en tres ángulos
+  const [idd, setIdd] = useState<IdDraft>(() => C.id ?? emptyId(C.driverName ?? (C.kind === 'PERSONA' ? (R.legalName ?? '') : ''), C.dni ?? ''));
   const [cls, setCls] = useState<string>(C.licenseCls ?? VCLASS_INFO[(C.vclass ?? 'V2') as 'V2'].license);
   const [exp, setExp] = useState<string>(C.licenseExp ?? '');
   const [licPh, setLicPh] = useState<string | undefined>(C.licPhoto);
   const [record, setRecord] = useState<string | undefined>(C.record);
   const [err, setErr] = useState('');
   const vclass = (C.vclass ?? 'V2') as 'V1' | 'V2' | 'V3';
-  const next = () => {
-    if (name.trim().split(' ').length < 2) { setErr('Escribe el nombre completo de quien maneja.'); return; }
-    if (!/^\d{8}$/.test(dni)) { setErr('El DNI tiene 8 números.'); return; }
-    if (Object.values(A.w.users).some(u => u.dni === dni)) { setErr('Ese DNI ya pertenece a otra cuenta (RN-18).'); return; }
-    if (!dniPh || !selfie) { setErr('Sube la foto del DNI y tómate una selfie en la app.'); return; }
+  const next = async () => {
+    const p = identityProblem(idd);
+    if (p) { setErr(p); return; }
+    if (Object.values(A.w.users).some(u => u.dni === idd.dni)) { setErr('Ese DNI ya pertenece a otra cuenta (RN-18).'); return; }
     if (!licenseMatches(vclass, cls)) { setErr(`Tu licencia ${cls} no sirve para ${VCLASS_INFO[vclass].label.toLowerCase()}: pide ${VCLASS_INFO[vclass].license}.`); return; }
     if (!exp || new Date(exp + 'T12:00:00-05:00').getTime() < A.now) { setErr('Escribe la fecha de vencimiento de tu licencia (vigente).'); return; }
     if (!licPh) { setErr('Sube la foto de tu licencia.'); return; }
-    regSet(A, { name: name.trim(), car: { ...C, driverName: name.trim(), dni, dniPhoto: dniPh, selfie, licenseCls: cls, licenseExp: exp, licPhoto: licPh, record } });
+    if (!(await confirmIdentity(A, idd))) return;
+    const name = idd.name.replace(/\s+/g, ' ').trim();
+    regSet(A, { name, car: { ...C, driverName: name, dni: idd.dni, id: idd, licenseCls: cls, licenseExp: exp, licPhoto: licPh, record } });
     A.go('T-03');
   };
   const row = (ok: boolean, title: string, sub: string, picker: any) => (
@@ -126,13 +126,8 @@ function CarrierDriver() {
     <Screen title="Conductor" sub="Cuenta de transportista aliado" foot={<Btn full onClick={next}>Continuar</Btn>}>
       <div className="stack">
         <RoleHead role="CARRIER" step={2} label="Quién maneja" />
-        <div className="grid2">
-          <Field label="Nombre completo"><Inp value={name} onInput={setName} label="Nombre completo" /></Field>
-          <Field label="DNI"><Inp value={dni} onInput={(v) => setDni(v.replace(/\D/g, '').slice(0, 8))} mode="numeric" label="DNI" /></Field>
-        </div>
+        <IdentityForm value={idd} onChange={(v) => { setIdd(v); setErr(''); }} nameLabel="Nombre completo de quien maneja" />
         <Card><div className="list">
-          {row(!!dniPh, 'DNI por ambos lados', 'Coincide con el RUC · RENIEC', <PhotoPick value={dniPh} onChange={setDniPh} label="DNI" kind="dni" />)}
-          {row(!!selfie, 'Selfie de comprobación', 'Tomada hoy en la app', <PhotoPick value={selfie} onChange={setSelfie} label="Selfie" kind="selfie" />)}
           <div className="stack tight" style={{ padding: ".55em 0" }}>
             <div className="row top"><span className={'icirc ' + (licPh && exp ? 'dark' : '')} style={{ width: "1.9em", height: "1.9em" }}>{licPh && exp ? <Icon n="check" s="1em" w={3} /> : <Icon n="upload" s="1em" />}</span><div className="grow"><b className="bodym">Licencia de conducir</b><div className="cap">{exp ? `Vence el ${dateNum(new Date(exp + 'T12:00:00-05:00').getTime())} · ` : ''}{licenseMatches(vclass, cls) ? `sirve para tu ${VCLASS_INFO[vclass].label.toLowerCase()} (${VCLASS_INFO[vclass].category})` : 'no corresponde a tu vehículo'}</div></div></div>
             <div className="grid2" style={{ paddingLeft: "2.6em" }}><Sel value={cls} onChange={setCls} options={['B-IIb', 'A-I', 'A-IIa', 'A-IIb'].map(x => ({ v: x, l: x }))} label="Clase de licencia" /><input className="inp" type="date" value={exp} onChange={(e: any) => setExp(e.currentTarget.value)} aria-label="Vencimiento de la licencia" /></div>
@@ -278,14 +273,13 @@ function CarrierAgreement() {
     A.act('PAYOUT_SET', { orgId, accounts: kind === 'CASH' ? [] : [{ id: 'pa-' + uid(), kind, number: acct.replace(/\D/g, ''), holder: C.driverName ?? R.legalName, relation: 'PROPIA' }], acceptsCash: true }, { as: userId, quiet: true });
     A.act('CARRIER_AGREEMENT', {}, { as: userId, quiet: true });
     const evidence: Evidence[] = [
-      { key: 'dni', label: 'DNI (ambas caras)', photoId: C.dniPhoto }, { key: 'selfie', label: 'Selfie', photoId: C.selfie },
       { key: 'licencia', label: `Licencia ${C.licenseCls}`, photoId: C.licPhoto, detail: `Vence ${C.licenseExp}` },
       ...Object.entries(C.docs ?? {}).map(([k, v]) => ({ key: k.toLowerCase(), label: docLabel[k] ?? k, detail: `Vence ${v}` })),
       { key: 'fotos', label: '4 fotos del vehículo', photoId: (C.photos ?? []).find(Boolean) },
       { key: 'cita', label: `Revisión del vehículo agendada para el ${dateShort(visit)} ${hhmm(visit)}` },
     ];
     if (C.record) evidence.push({ key: 'record', label: 'Récord de conductor', photoId: C.record });
-    A.act('VERIF_SUBMIT', { caseId: 'case-' + uid(), orgId, targetLevel: 2, evidence }, { as: userId, quiet: true });
+    A.act('VERIF_SUBMIT', { caseId: 'case-' + uid(), orgId, targetLevel: 2, evidence, ...(C.id ? { identity: idPayload(C.id) } : {}) }, { as: userId, quiet: true });
     A.patch(d => { d.userId = userId; d.stack = [{ s: 'T-08' }, { s: 'T-06' }]; d.flow = { visitAt: visit }; });
     A.toast('Enviamos tu cuenta a revisión. Ahora agenda la revisión del vehículo y haz la capacitación.');
   };

@@ -477,6 +477,133 @@ describe('API de Mesagri', () => {
     });
   });
 
+  describe('identidad: consulta del DNI (padrón de prueba o proveedor de RENIEC)', () => {
+    const bearer = (t: string) => ({ Authorization: 'Bearer ' + t });
+    const ticketFor = async (phone: string) => {
+      const otp = await api().post('/api/v1/auth/otp').send({ phone, purpose: 'REGISTER' });
+      return (await api().post('/api/v1/auth/otp/verify').send({ phone, code: otp.body.demoCode })).body.ticket as string;
+    };
+    const faces = [
+      { pose: 'FRONT', photoId: 'ph-api-f1', live: true, auto: { ok: true, faces: 1, yaw: 2 } },
+      { pose: 'RIGHT', photoId: 'ph-api-f2', live: true, auto: { ok: true, faces: 1, yaw: -26 } },
+      { pose: 'LEFT', photoId: 'ph-api-f3', live: true, auto: { ok: true, faces: 1, yaw: 27 } },
+    ];
+
+    it('padrón de prueba: solo dice si coincide (nunca el nombre oficial) y pide el permiso de registro', async () => {
+      const info = await api().get('/api/v1/identity/registry');
+      expect(info.body.source).toBe('PADRON_PRUEBA');
+      expect(info.body.tests.map((x: any) => x.dni)).toContain('41235876');
+      const body = { dni: '41235876', name: 'Teodora Quispe Mamani' };
+      expect((await api().post('/api/v1/identity/dni-check').send(body)).status).toBe(401);
+      const ticket = await ticketFor('933221166');
+      const ok = await api().post('/api/v1/identity/dni-check').send({ ...body, ticket });
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+      expect(ok.body).toMatchObject({ status: 'MATCH', source: 'PADRON_PRUEBA', deceased: false });
+      expect(JSON.stringify(ok.body)).not.toMatch(/TEODORA|QUISPE/);
+      expect((await api().post('/api/v1/identity/dni-check').send({ ...body, name: 'Rosa Ccalla Huamán', ticket })).body.status).toBe('NAME_MISMATCH');
+      expect((await api().post('/api/v1/identity/dni-check').send({ dni: '40817263', name: 'Mario Ccapa Huamaní', ticket })).body).toMatchObject({ status: 'DECEASED', deceased: true });
+      expect((await api().post('/api/v1/identity/dni-check').send({ dni: '12345678', name: 'Ana Ruiz Paz', ticket })).body.status).toBe('NOT_FOUND');
+      expect((await api().post('/api/v1/identity/dni-check').send({ dni: '1234', name: 'Ana Ruiz Paz', ticket })).body.code).toBe('BAD_DNI');
+      // límite de consultas: así nadie recorre DNI ajenos
+      let last = 200;
+      for (let i = 0; i < 8 && last === 200; i++) last = (await api().post('/api/v1/identity/dni-check').send({ ...body, ticket })).status;
+      expect(last).toBe(429);
+    });
+
+    it('al enviar el expediente el servidor consulta el DNI y lo anota; la persona no ve el nombre oficial', async () => {
+      const phone = '933221177';
+      const ticket = await ticketFor(phone);
+      const reg = await api().post('/api/v1/auth/register').send({ ticket, event: { id: 'e-reg-id-1', p: { userId: 'u-teo-api', orgId: 'org-teo-api', role: 'FARMER', phone, name: 'Teodora Quispe Mamani', dni: '41235876', lang: 'es', org: { district: '040519' } } } });
+      expect(reg.status, JSON.stringify(reg.body)).toBe(201);
+      const tok = reg.body.session.accessToken as string;
+      const identity = { dni: '41235876', name: 'Teodora Quispe Mamani', dniFront: 'ph-api-d1', dniBack: 'ph-api-d2', faces };
+      const sub = await api().post('/api/v1/verification/cases').set(bearer(tok)).send({ caseId: 'case-id-api', targetLevel: 1, identity, evidence: [{ key: 'cobro', label: 'Yape propio' }] });
+      expect(sub.status, JSON.stringify(sub.body)).toBe(201);
+      // la consulta la hace el servidor (no el celular) y queda en el expediente
+      const admin = await session('u-lucia');
+      await expect.poll(async () => (await api().get('/api/v1/sync/snapshot').set(bearer(admin))).body.world.cases['case-id-api']?.identity?.registry?.status, { timeout: 8000 }).toBe('MATCH');
+      const seen = (await api().get('/api/v1/sync/snapshot').set(bearer(admin))).body.world.cases['case-id-api'];
+      expect(seen.identity.registry).toMatchObject({ source: 'PADRON_PRUEBA', officialName: 'TEODORA QUISPE MAMANI' });
+      expect(seen.evidence.map((e: any) => e.key)).toEqual(['dni', 'dni2', 'rostro', 'rostro-der', 'rostro-izq', 'cobro']);
+      const mine = (await api().get('/api/v1/sync/snapshot').set(bearer(tok))).body.world.cases['case-id-api'];
+      expect(mine.identity.registry.status).toBe('MATCH');
+      expect(mine.identity.registry.officialName).toBeUndefined();
+      // guardado en MySQL con su identidad
+      const req = createRequire(path.resolve(process.cwd(), 'package.json'));
+      const { rows } = req('./dist/db/db.js') as typeof import('../src/db/db');
+      const engine = app.get(req('./dist/core/engine.service.js').EngineService);
+      const row = (await rows(engine.pool, 'SELECT identity FROM verification_cases WHERE uuid = ?', ['case-id-api']))[0];
+      expect(row.identity.faces.length).toBe(3);
+      expect(row.identity.registry.status).toBe('MATCH');
+      // el celular no puede anotar una consulta por su cuenta
+      const forged = await api().post('/api/v1/sync/events').set(bearer(tok)).send({ events: [{ id: 'e-id-forged', type: 'VERIF_IDCHECK', p: { caseId: 'case-id-api', dni: '41235876', registry: { status: 'MATCH', source: 'PROVEEDOR' } } }] });
+      expect(forged.body.results[0].error.code).toBe('FORBIDDEN');
+      // el panel guarda lo que leyó en las fotos
+      const auto = await api().post('/api/v1/sync/events').set(bearer(admin)).send({ events: [{ id: 'e-id-auto', type: 'VERIF_AUTOCHECK', p: { caseId: 'case-id-api', review: { mrz: { read: true, checks: true, dni: '41235876', surnames: 'QUISPE MAMANI', given: 'TEODORA', birth: '840512', expiry: '310820', sex: 'F' }, faceMatch: { distance: 0.31 } } } }] });
+      expect(auto.body.results[0].ok, JSON.stringify(auto.body)).toBe(true);
+      expect((await api().get('/api/v1/sync/snapshot').set(bearer(admin))).body.world.cases['case-id-api'].identity.review.faceMatch.level).toBe('ALTA');
+    });
+
+    describe('con un proveedor de consultas', () => {
+      let CONFIG: any;
+      let srv: nodeHttp.Server;
+      const hits: { url: string; auth: string }[] = [];
+      let reject = false;
+      const saved: any = {};
+      beforeAll(async () => {
+        CONFIG = createRequire(path.resolve(process.cwd(), 'package.json'))('./dist/config.js').CONFIG;
+        // el proveedor de mentira (responde como Factiliza: data.nombres, apellido_paterno...)
+        srv = nodeHttp.createServer((req, res) => {
+          hits.push({ url: String(req.url), auth: String(req.headers.authorization ?? '') });
+          res.setHeader('Content-Type', 'application/json');
+          if (reject) { res.statusCode = 401; res.end(JSON.stringify({ message: 'token inválido' })); return; }
+          const dni = String(req.url).split('/').pop();
+          if (dni === '44871209') { res.end(JSON.stringify({ status: 200, success: true, data: { numero: dni, nombres: 'RUBEN DARIO', apellido_paterno: 'HUAMANI', apellido_materno: 'CONDORI', nombre_completo: 'HUAMANI CONDORI, RUBEN DARIO' } })); return; }
+          if (dni === '40817263') { res.end(JSON.stringify({ success: true, data: { first_name: 'MARIO', first_last_name: 'CCAPA', second_last_name: 'HUAMANI', fecha_fallecimiento: '2024-02-11' } })); return; }
+          res.statusCode = 404; res.end(JSON.stringify({ success: false, message: 'No se encontró el DNI' }));
+        });
+        await new Promise<void>(r => srv.listen(0, '127.0.0.1', () => r()));
+        Object.assign(saved, { ...CONFIG.dniApi });
+        Object.assign(CONFIG.dniApi, { url: `http://127.0.0.1:${(srv.address() as AddressInfo).port}/v1/dni/info/{dni}`, token: 'token-de-prueba', provider: 'Proveedor de prueba' });
+      });
+      afterAll(async () => {
+        Object.assign(CONFIG.dniApi, saved);
+        await new Promise(r => srv.close(r));
+      });
+
+      it('consulta con el token, guarda la consulta 30 días y lee el fallecimiento si el proveedor lo informa', async () => {
+        expect((await api().get('/api/v1/identity/registry')).body).toMatchObject({ source: 'PROVEEDOR', provider: 'Proveedor de prueba', tests: [] });
+        const ticket = await ticketFor('933221188');
+        const one = await api().post('/api/v1/identity/dni-check').send({ dni: '44871209', name: 'Rubén Darío Huamaní Condori', ticket });
+        expect(one.body).toMatchObject({ status: 'MATCH', source: 'PROVEEDOR', provider: 'Proveedor de prueba', deceased: null });
+        expect(hits.at(-1)).toEqual({ url: '/v1/dni/info/44871209', auth: 'Bearer token-de-prueba' });
+        const n = hits.length;
+        expect((await api().post('/api/v1/identity/dni-check').send({ dni: '44871209', name: 'Rubén Huamaní', ticket })).body.status).toBe('PARTIAL');
+        expect(hits.length).toBe(n); // segunda vez: de la consulta guardada, sin pagar otra
+        expect((await api().post('/api/v1/identity/dni-check').send({ dni: '40817263', name: 'Mario Ccapa Huamaní', ticket })).body).toMatchObject({ status: 'DECEASED', deceased: true });
+        expect((await api().post('/api/v1/identity/dni-check').send({ dni: '41111111', name: 'Ana Ruiz Paz', ticket })).body.status).toBe('NOT_FOUND');
+      });
+
+      it('si el proveedor rechaza la clave, no se cae: queda para que lo revise una persona', async () => {
+        reject = true;
+        try {
+          const ticket = await ticketFor('933221199');
+          const r = await api().post('/api/v1/identity/dni-check').send({ dni: '42222222', name: 'Ana Ruiz Paz', ticket });
+          expect(r.body).toMatchObject({ status: 'UNAVAILABLE', source: 'PROVEEDOR' });
+          // desde el panel se vuelve a consultar sin usar lo guardado
+          reject = false;
+          const admin = await session('u-lucia');
+          const n = hits.length;
+          const re = await api().post('/api/v1/admin/cases/case-id-api/dni-check').set(bearer(admin));
+          expect(re.status, JSON.stringify(re.body)).toBe(201);
+          expect(re.body.registry).toMatchObject({ source: 'PROVEEDOR', status: 'NOT_FOUND' });
+          expect(hits.length).toBe(n + 1);
+          expect((await api().post('/api/v1/admin/cases/case-id-api/dni-check').set(bearer(await session('u-ana')))).status).toBe(403);
+        } finally { reject = false; }
+      });
+    });
+  });
+
   it('política de privacidad publicada (la pide Meta)', async () => {
     const r = await api().get('/privacidad');
     expect(r.status).toBe(200);

@@ -112,12 +112,16 @@ test('registro: un agricultor nuevo completa los 5 pasos y Lucía aprueba su niv
   await expect(screen(n)).toHaveAttribute('data-screen', 'A-05');
   await n.getByLabel('Nombre completo').fill('Teodora Quispe Mamani');
   await n.getByLabel('DNI', { exact: true }).fill('41235876');
-  for (const label of ['DNI · frente', 'DNI · reverso', 'Selfie']) {
-    const sample = n.getByRole('button', { name: `Usar foto de ejemplo: ${label}` });
-    await sample.click();
-    await expect(sample).toHaveCount(0);
-  }
+  await n.getByLabel('Dígito de verificación').fill('2');
+  await expect(n.getByRole('status').filter({ hasText: 'Coincide con el padrón de prueba' })).toBeVisible({ timeout: 10_000 });
+  for (const label of ['DNI · frente', 'DNI · reverso']) await n.getByRole('button', { name: `Usar foto de ejemplo: ${label}` }).click();
+  await n.getByRole('button', { name: 'Usar fotos de ejemplo del rostro' }).click();
+  await expect(n.locator('.idfaces .chip').filter({ hasText: 'Bien' })).toHaveCount(3, { timeout: 30_000 });
+  await expect(n.locator('.grid2 .chip')).toHaveCount(2);
   await tap(n, 'Continuar', true);
+  // las fotos de ejemplo del DNI son de otra persona: se pregunta antes de mandar y queda para que el equipo lo vea
+  const ask = n.getByRole('dialog').filter({ hasText: '¿Mandar así?' });
+  if (await ask.count()) await ask.getByRole('button', { name: 'Mandar así' }).click();
   await expect(screen(n)).toHaveAttribute('data-screen', 'A-06');
   const num = n.getByLabel('Número', { exact: true });
   if (await num.count()) await num.fill('987111222');
@@ -133,6 +137,10 @@ test('registro: un agricultor nuevo completa los 5 pasos y Lucía aprueba su niv
   await expect(row).toContainText('Yape propio');
   await row.getByRole('button', { name: /^(Tomar|Abrir)$/ }).click();
   await expect(screen(w)).toHaveAttribute('data-screen', 'W-04');
+  // la revisión automática corre sola al abrir el expediente: lee el DNI de la foto (de otra persona) y lo marca
+  const rev = w.getByRole('region', { name: 'Revisión automática de identidad' });
+  await expect(rev).toBeVisible();
+  await expect(rev.getByRole('status')).toHaveCount(0, { timeout: 120_000 });
   await w.getByLabel('Motivo').fill('DNI legible y selfie coincide con la foto del DNI.');
   await tap(w, 'Guardar decisión');
   await page.getByRole('tab', { name: /Celulares/ }).click();
