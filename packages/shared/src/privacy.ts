@@ -18,7 +18,7 @@
  * «Ver cuentas de prueba». Ninguna entidad se quita del mundo, solo se ocultan campos: así los
  * totales y calificaciones que calcula cada celular salen iguales para todos.
  */
-import type { World, User, Org, SubOrder, VerifCase, Dispute, Complaint, Ticket, PurchaseRequest, Schedule, Booking, Notif, AuditEntry, ReleaseOrder } from './types';
+import type { World, User, Org, SubOrder, VerifCase, Dispute, Complaint, Ticket, PurchaseRequest, Schedule, Booking, Notif, AuditEntry, ReleaseOrder, Statement, SubInvoice } from './types';
 import { seedWorld } from './engine/index';
 import { sealCode, CODE_SALT } from './ids';
 import { maskPhone } from './rules';
@@ -165,9 +165,12 @@ export const MASKS: Record<string, Masker> = {
     if (!parties.some(o => realOrg(x, o)) || parties.some(o => own(x, o))) return m;
     const c = without(edit(), 'taxDocNumber');
     c.address = '';
-    c.payment = without(s.payment, 'operation', 'photoId');
+    c.payment = without(s.payment, 'operation', 'photoId', 'payerName', 'securityCode');
     return c;
   },
+  /** pagos a Mesagri: el detalle (operación, titular, código, captura) solo lo ve la propia cuenta y el equipo */
+  statements: (st: Statement, _id, x) => (isAdmin(x) || !realOrg(x, st.orgId) || own(x, st.orgId) || !st.payment ? st : { ...st, payment: { method: st.payment.method, operation: '', at: st.payment.at } }),
+  invoices: (inv: SubInvoice, _id, x) => (isAdmin(x) || !realOrg(x, inv.orgId) || own(x, inv.orgId) || !inv.payment ? inv : { ...inv, payment: { method: inv.payment.method, operation: '', at: inv.payment.at } }),
   messages: (list: unknown[], conv, x) => {
     if (isAdmin(x)) return list;
     const parties = convParties(x.w, conv);

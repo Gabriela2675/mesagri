@@ -177,6 +177,33 @@ describe('Mundo ↔ MySQL', () => {
     expect(w.users['u-nayeli'].status).toBe('SUSPENDED');
     await ok('u-majo', 'CATALOG_ADD', { name: 'Kiwicha', category: 'GRANOS', units: ['kg', 'saco'], chacra: 4.5, mayorista: 6.8, perishDays: 180, storable: true, synonyms: ['amaranto'] });
     expect(w.catalogExtra['kiwicha']).toBeTruthy();
+    // pagos que se pueden comprobar: titular, código de seguridad de Yape y captura
+    await ok('u-elena', 'PAYMENT_UPLOAD', { subOrderId: 'so-e01', method: 'YAPE', operation: '66112233', payerName: 'Elena Quispe', securityCode: '472', photoId: 'ph-rt-voucher' });
+    expect(w.subOrders['so-e01'].payment).toMatchObject({ payerName: 'Elena Quispe', securityCode: '472' });
+    // membresía: un pago que no aparece en el extracto (vuelve a como estaba) y otro que sí
+    await ok('u-elena', 'SUB_PAY', { method: 'YAPE', operation: '66112234', payerName: 'Elena Quispe', securityCode: '118', photoId: 'ph-rt-sub' });
+    const invRt = Object.values(w.invoices).find(i => i.orgId === 'org-elena' && i.status === 'PAID')!;
+    await ok('u-majo', 'BILLING_RECONCILE', { kind: 'INVOICE', id: invRt.id, ok: false, note: 'No aparece en el extracto' });
+    expect(w.invoices[invRt.id].reconcileNote).toBe('No aparece en el extracto');
+    await ok('u-elena', 'SUB_PAY', { method: 'TRANSFER', operation: '66112235', payerName: 'Sabor Paucarpata E.I.R.L.' });
+    await ok('u-majo', 'BILLING_RECONCILE', { kind: 'INVOICE', id: invRt.id, ok: true });
+    await ok('u-gladys', 'SUB_UPGRADE', { plan: 'PRO', method: 'YAPE', operation: '66112236', payerName: 'Gladys Rojas' });
+    // cuentas de Mesagri con doble aprobación
+    await ok('u-majo', 'MESAGRI_DATA_PROPOSE', { accounts: [{ kind: 'YAPE', number: '912345678', holder: 'Mesagri S.A.C.' }, { kind: 'BANK', number: '1912345678001', holder: 'Mesagri S.A.C.', bank: 'BCP', cci: '00219100912345678001' }], whatsapp: '912345678', reason: 'Cuenta real' });
+    await ok('u-gaby', 'MESAGRI_DATA_APPROVE', {});
+    // el equipo corrige datos, modera, cancela y responde
+    await ok('u-diana', 'ACCOUNT_EDIT', { orgId: 'org-geranios', org: { address: 'Calle Misti 214, Yanahuara' }, users: [{ userId: 'u-charo', phone: '959300499', dni: '29337413' }], reason: 'Cambió de celular' });
+    w.listings['l-l-frejol'].photoIds = ['ph-rt-a'];
+    await ok('u-diana', 'LISTING_MODERATE', { listingId: 'l-h-cebolla', decision: 'REMOVE', reason: 'Foto que no es del producto' });
+    await ok('u-diana', 'SUBORDER_ADMIN_CANCEL', { subOrderId: 'so-rt-req', reason: 'Las dos partes lo pidieron', side: 'BUYER' });
+    await ok('u-elena', 'TICKET_REPLY', { ticketId: 'tk-rt', text: 'Gracias. ¿Y si no responde?' });
+    await ok('u-diana', 'TICKET_REPLY', { ticketId: 'tk-rt', text: 'Te llamamos.', close: true });
+    await ok('u-rt-farmer', 'PREFS_SET', { prefs: { textScale: 0.9 } });
+    await ok('u-diana', 'REVIEW_MODERATE', { reviewId: 'rv-rt', reason: 'Prueba de moderación' });
+    expect(w.reviews['rv-rt'].comment).toBeUndefined();
+    // una cuenta eliminada: queda sin datos personales y vuelve igual desde la base
+    await ok('u-majo', 'ACCOUNT_DELETE', { orgId: 'org-lucio', reason: 'Lo pidió por la app (Ley 29733)' });
+    expect(w.users['u-lucio'].phone).toBe('');
     // pasan 40 días: vencimientos, cierre de mes, membresías y publicaciones vencidas
     await ok('system', 'CLOCK_TICK', {}, 40 * DAY);
     await ok('system', 'CLOCK_TICK', {}, 2 * HOUR);

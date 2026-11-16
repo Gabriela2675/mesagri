@@ -23,6 +23,8 @@ import { orgName, PAY_LABEL } from '../helpers';
 import { districtName, placeLabel } from '@mesagri/shared/ubigeo';
 import { accruedRent, fmtVal } from '@mesagri/shared/engine/billing';
 import type { World, Org, Statement, SubInvoice, Shipment, VerifCase, DocItem, Lang } from '@mesagri/shared/types';
+import { MesagriAccounts, StatementMatch, ProofTable } from './admin3';
+import { mesagriData } from '@mesagri/shared/queries';
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const monthOf = (p: string) => cap(periodLabel(p).split(' ')[0]);
@@ -653,14 +655,15 @@ function ClaimCard({ id }: { id: string }) {
 }
 
 /* ================= W-14 · Cobros y estados de cuenta ================= */
-type CTab = 'FARMER' | 'BUYER' | 'WAREHOUSE' | 'CARRIER' | 'REC';
+type CTab = 'FARMER' | 'BUYER' | 'WAREHOUSE' | 'CARRIER' | 'REC' | 'CTA';
 function Billing() {
   const A = useApp();
   const w = A.w;
   const P = periodOf(A.now);
   const periods = [...new Set([...Object.values(w.statements).map(s => s.period), ...Object.values(w.invoices).map(i => i.period)])].sort().reverse();
   const [period, setPeriod] = useState<string>(periods.find(p => p < P) ?? periods[0] ?? prevPeriod(P));
-  const [tab, setTab] = useState<CTab>('FARMER');
+  const [tab, setTab] = useState<CTab>(A.top.p?.tab === 'CTA' ? 'CTA' : A.top.p?.tab === 'REC' ? 'REC' : 'FARMER');
+  const md = mesagriData(w);
   const [sel, setSel] = useState<string | undefined>();
   const toRec = [...Object.values(w.statements).filter(s => s.status === 'PAYMENT_REGISTERED' || s.claim?.status === 'OPEN'), ...Object.values(w.invoices).filter(i => i.status === 'PAID')];
   const exportAll = () => downloadCsv(A, `cobros-${period}.csv`, [['Tipo', 'Código', 'Cuenta', 'RUC o DNI', 'Periodo', 'Base', 'Monto', 'Estado', 'Medio', 'Operación', 'Comprobante'],
@@ -669,9 +672,10 @@ function Billing() {
   return (
     <WebFrame title="Cobros y estados de cuenta" sub={`Estados de cuenta de ${periodLabel(period)} (emitidos el 1 de ${periodLabel(nextPeriod(period)).split(' ')[0]}) · hoy ${dateDM(A.now)} · Mesagri cobra lo suyo, nunca el dinero de los pedidos`}
       right={<><Sel value={period} onChange={(p) => { setPeriod(p); setSel(undefined); }} options={periods.map(p => ({ v: p, l: cap(periodLabel(p)) }))} label="Periodo" /><Btn sm kind="sec" icon="download" onClick={exportAll}>Exportar al contador</Btn></>}>
-      <Tabs value={tab} onChange={(t) => { setTab(t); setSel(undefined); }} options={[['FARMER', 'Agricultores · comisión'], ['BUYER', 'MYPE · membresías'], ['WAREHOUSE', `Almacenes · ${pct(w.settings.storage.commission)}`], ['CARRIER', `Transportistas · ${pct(w.settings.carrier.commission)}`], ['REC', `Conciliación (${toRec.length})`]]} />
-      {tab === 'BUYER' ? <Memberships period={period} /> : tab === 'REC' ? <Reconcile /> : <Statements kind={tab} period={period} sel={sel} setSel={setSel} />}
-      <p className="wnote">Cada pago por Yape o transferencia se concilia con su número de operación. Anular un cargo exige motivo, emite nota de crédito y queda en auditoría (RN-41).</p>
+      {md.example && tab !== 'CTA' && <div className="wcard" style={{ marginBottom: '12px', borderColor: 'var(--terra6)' }}><div className="row between wrap"><span className="bodym"><Icon n="triangle-alert" s="16" /> Las cuentas donde te pagan son de ejemplo: pon la cuenta real de Mesagri para que la gente pueda pagarte.</span><Btn sm kind="dark" onClick={() => { setTab('CTA'); setSel(undefined); }}>Poner las cuentas de Mesagri</Btn></div></div>}
+      <Tabs value={tab} onChange={(t) => { setTab(t); setSel(undefined); }} options={[['FARMER', 'Agricultores · comisión'], ['BUYER', 'MYPE · membresías'], ['WAREHOUSE', `Almacenes · ${pct(w.settings.storage.commission)}`], ['CARRIER', `Transportistas · ${pct(w.settings.carrier.commission)}`], ['REC', `Conciliación (${toRec.length})`], ['CTA', `Cuentas de Mesagri${md.pending ? ' (1 por aprobar)' : ''}`]]} />
+      {tab === 'BUYER' ? <Memberships period={period} /> : tab === 'REC' ? <Reconcile /> : tab === 'CTA' ? <MesagriAccounts /> : <Statements kind={tab} period={period} sel={sel} setSel={setSel} />}
+      <p className="wnote">Un pago solo está confirmado cuando lo ves en la cuenta de Mesagri (extracto del banco o movimientos de Yape) con el mismo número de operación, monto y titular: una captura o un número solos se pueden inventar. Anular un cargo exige motivo, emite nota de crédito y queda en auditoría (RN-41).</p>
     </WebFrame>
   );
 }
@@ -737,7 +741,7 @@ function StatementPanel({ id, onClose }: { id: string; onClose: () => void }) {
       </tbody></table>
       {voidFor && <div className="stack tight" style={{ marginTop: "10px" }}><Inp value={why} onInput={setWhy} placeholder="Motivo de la anulación (RN-41)" label="Motivo" /><div className="row g8"><Btn sm kind="danger" onClick={() => { if (A.act('CHARGE_VOID', { statementId: id, itemId: voidFor, reason: why }, { ok: 'Cargo anulado: se emitió una nota de crédito.' }).ok) { setVoidFor(undefined); setWhy(''); } }}>Anular el cargo</Btn><Btn sm kind="sec" onClick={() => setVoidFor(undefined)}>Cancelar</Btn></div></div>}
       {st.claim?.status === 'OPEN' && claimItem && <div className="stack tight" style={{ marginTop: "12px" }}><div className="sect">Reclamo del usuario</div><p className="bodym" style={{ margin: "0" }}>{claimItem.label} · {money(claimItem.amount)}: «{st.claim.reason}»</p><Inp value={note} onInput={setNote} placeholder="Respuesta (el usuario la lee)" label="Respuesta" /><div className="row g8"><Btn sm kind="dark" onClick={() => A.act('STATEMENT_CLAIM_DECIDE', { statementId: id, accept: true, note }, { ok: 'Reclamo aceptado: cargo anulado con nota de crédito.' })}>Aceptar y anular</Btn><Btn sm kind="sec" onClick={() => A.act('STATEMENT_CLAIM_DECIDE', { statementId: id, accept: false, note }, { ok: 'Reclamo respondido.' })}>No procede</Btn></div></div>}
-      {st.status === 'PAYMENT_REGISTERED' && st.payment && <div className="stack tight" style={{ marginTop: "12px" }}><div className="sect">Pago registrado</div><p className="bodym" style={{ margin: "0" }}>{PAY_LABEL[st.payment.method]} · op. <b>{st.payment.operation}</b> · {dateShort(st.payment.at)} {hhmm(st.payment.at)} · {money(st.total)}</p><Inp value={note} onInput={setNote} placeholder="Si no coincide: qué falta (el usuario lo lee)" label="Nota" /><div className="row g8 wrap"><Btn sm kind="dark" onClick={() => A.act('BILLING_RECONCILE', { kind: 'STATEMENT', id, ok: true }, { ok: 'Conciliado: se emitió el comprobante de Mesagri.' })}>Coincide: emitir comprobante</Btn><Btn sm kind="secd" onClick={() => A.act('BILLING_RECONCILE', { kind: 'STATEMENT', id, ok: false, note }, { ok: 'Pago observado: avisamos al usuario.' })}>No coincide</Btn></div></div>}
+      {st.status === 'PAYMENT_REGISTERED' && st.payment && <div className="stack tight" style={{ marginTop: "12px" }}><div className="sect">Pago registrado · búscalo en la cuenta de Mesagri</div><ProofTable pay={st.payment} amount={st.total} /><Inp value={note} onInput={setNote} placeholder="Si no aparece: qué falta (el usuario lo lee)" label="Nota" /><div className="row g8 wrap"><Btn sm kind="dark" onClick={() => A.act('BILLING_RECONCILE', { kind: 'STATEMENT', id, ok: true }, { ok: 'Conciliado: se emitió el comprobante de Mesagri.' })}>Aparece: emitir comprobante</Btn><Btn sm kind="secd" onClick={() => A.act('BILLING_RECONCILE', { kind: 'STATEMENT', id, ok: false, note: note || 'No aparece en el extracto de Mesagri: revisa el número de operación y vuelve a registrarlo.' }, { ok: 'Pago observado: avisamos al usuario y vuelve a deber.' })}>No aparece</Btn></div></div>}
       {st.receiptNumber && <p className="wnote">Comprobante de Mesagri: {st.receiptNumber}.</p>}
     </div>
   );
@@ -757,28 +761,48 @@ function Memberships({ period }: { period: string }) {
         <Kpi l="MYPE en gracia o sin membresía" n={buyers.filter(o => o.subscription!.status === 'GRACE' || o.subscription!.status === 'INACTIVE').length} tone="terra" s={`${buyers.filter(o => o.subscription!.status === 'TRIAL').length} en el mes gratis`} />
       </div>
       <div className="wcard"><table className="wtable resp"><thead><tr><th>MYPE</th><th>Concepto</th><th className="r">Monto</th><th>Pago</th><th>Estado</th><th>Comprobante</th><th /></tr></thead>
-        <tbody>{list.map(i => <tr key={i.id}><td data-l="MYPE"><b>{orgName(w, i.orgId)}</b></td><td data-l="Concepto">{i.concept}</td><td data-l="Monto" className="r tnum">{money(i.amount)}</td><td data-l="Pago">{i.payment ? `${PAY_LABEL[i.payment.method]} · op. ${i.payment.operation}` : '—'}</td><td data-l="Estado"><Pill tone={i.status === 'RECONCILED' ? '' : i.status === 'PAID' ? 'info' : i.status === 'VOID' ? 'gray' : 'warn'}>{({ ISSUED: 'Por pagar', PAID: 'Por conciliar', RECONCILED: 'Conciliado', VOID: 'Anulado' } as any)[i.status]}</Pill></td><td data-l="Comprobante">{i.receiptNumber ? `Factura ${i.receiptNumber}` : '—'}</td><td data-l="">{i.status === 'PAID' && <Btn sm kind="dark" onClick={() => A.act('BILLING_RECONCILE', { kind: 'INVOICE', id: i.id }, { ok: 'Conciliado: se emitió la factura de la membresía.' })}>Conciliar</Btn>}</td></tr>)}</tbody></table>
+        <tbody>{list.map(i => <tr key={i.id}><td data-l="MYPE"><b>{orgName(w, i.orgId)}</b></td><td data-l="Concepto">{i.concept}</td><td data-l="Monto" className="r tnum">{money(i.amount)}</td><td data-l="Pago">{i.payment ? `${PAY_LABEL[i.payment.method]} · op. ${i.payment.operation}${i.payment.payerName ? ` · ${i.payment.payerName}` : ''}${i.payment.securityCode ? ` · código ${i.payment.securityCode}` : ''}` : i.reconcileNote ? <span className="cap">No apareció: {i.reconcileNote}</span> : '—'}</td><td data-l="Estado"><Pill tone={i.status === 'RECONCILED' ? '' : i.status === 'PAID' ? 'info' : i.status === 'VOID' ? 'gray' : 'warn'}>{({ ISSUED: 'Por pagar', PAID: 'Por conciliar', RECONCILED: 'Conciliado', VOID: 'Anulado' } as any)[i.status]}</Pill></td><td data-l="Comprobante">{i.receiptNumber ? `Factura ${i.receiptNumber}` : '—'}</td><td data-l="">{i.status === 'PAID' && <InvoiceActions id={i.id} />}</td></tr>)}</tbody></table>
         {list.length === 0 && <p className="wnote">Sin cobros de membresía en {periodLabel(period)}: las MYPE nuevas tienen el primer mes gratis.</p>}</div>
     </>
   );
+}
+/** Conciliar o no un pago de membresía (si no aparece, la membresía vuelve a como estaba). */
+function InvoiceActions({ id }: { id: string }) {
+  const A = useApp();
+  const no = async () => {
+    if (!await A.confirm({ title: '¿El pago no aparece en la cuenta de Mesagri?', text: 'La membresía vuelve a como estaba antes de ese pago (si era un cambio de plan, vuelve al plan anterior) y le avisamos a la MYPE para que pague de nuevo.', ok: 'No aparece', danger: true })) return;
+    A.act('BILLING_RECONCILE', { kind: 'INVOICE', id, ok: false, note: 'No aparece en la cuenta de Mesagri con ese número de operación y ese monto' }, { ok: 'Pago observado: la membresía volvió a como estaba y avisamos a la MYPE.' });
+  };
+  return <div className="row g8 wrap"><Btn sm kind="dark" onClick={() => A.act('BILLING_RECONCILE', { kind: 'INVOICE', id, ok: true }, { ok: 'Conciliado: se emitió la factura de la membresía.' })}>Aparece</Btn><Btn sm kind="secd" onClick={no}>No aparece</Btn></div>;
 }
 function Reconcile() {
   const A = useApp();
   const w = A.w;
   const sts = Object.values(w.statements).filter(s => s.status === 'PAYMENT_REGISTERED' || s.claim?.status === 'OPEN');
   const invs = Object.values(w.invoices).filter(i => i.status === 'PAID');
-  const [sel, setSel] = useState<string | undefined>(sts[0]?.id);
+  const [sel, setSel] = useState<string | undefined>(sts[0]?.id ?? invs[0]?.id);
+  const inv = sel ? w.invoices[sel] : undefined;
   return (
-    <div className="split">
-      <div className="wcard"><h2>Pagos por conciliar</h2>
-        <table className="wtable resp"><thead><tr><th>Cuenta</th><th>Concepto</th><th className="r">Monto</th><th>Operación</th><th /></tr></thead>
-          <tbody>
-            {sts.map(s => <Row key={s.id} sel={s.id === sel} onOpen={() => setSel(s.id)}><td data-l="Cuenta"><b>{orgName(w, s.orgId)}</b></td><td data-l="Concepto">{s.code}{s.claim?.status === 'OPEN' ? ' · reclamo de un cargo' : ''}</td><td data-l="Monto" className="r tnum">{money(s.total)}</td><td data-l="Operación">{s.payment ? `${PAY_LABEL[s.payment.method]} · ${s.payment.operation}` : '—'}</td><td data-l=""><Btn sm kind="sec" onClick={(e: any) => { e.stopPropagation(); setSel(s.id); }}>Revisar</Btn></td></Row>)}
-            {invs.map(i => <tr key={i.id}><td data-l="Cuenta"><b>{orgName(w, i.orgId)}</b></td><td data-l="Concepto">{i.concept}</td><td data-l="Monto" className="r tnum">{money(i.amount)}</td><td data-l="Operación">{i.payment ? `${PAY_LABEL[i.payment.method]} · ${i.payment.operation}` : '—'}</td><td data-l=""><Btn sm kind="dark" onClick={() => A.act('BILLING_RECONCILE', { kind: 'INVOICE', id: i.id }, { ok: 'Conciliado: se emitió la factura.' })}>Conciliar</Btn></td></tr>)}
-          </tbody></table>
-        {sts.length + invs.length === 0 && <p className="wnote">No hay pagos por conciliar.</p>}
+    <div className="stack">
+      <StatementMatch onPick={setSel} />
+      <div className="split">
+        <div className="wcard"><h2>Pagos por conciliar</h2>
+          <table className="wtable resp"><thead><tr><th>Cuenta</th><th>Concepto</th><th className="r">Monto</th><th>Operación y titular</th><th /></tr></thead>
+            <tbody>
+              {sts.map(s => <Row key={s.id} sel={s.id === sel} onOpen={() => setSel(s.id)}><td data-l="Cuenta"><b>{orgName(w, s.orgId)}</b></td><td data-l="Concepto">{s.code}{s.claim?.status === 'OPEN' ? ' · reclamo de un cargo' : ''}</td><td data-l="Monto" className="r tnum">{money(s.total)}</td><td data-l="Operación">{s.payment ? <>{PAY_LABEL[s.payment.method]} · {s.payment.operation}<div className="cap">{s.payment.payerName ?? 'sin titular'}{s.payment.securityCode ? ` · código ${s.payment.securityCode}` : ''}</div></> : '—'}</td><td data-l=""><Btn sm kind="sec" onClick={(e: any) => { e.stopPropagation(); setSel(s.id); }}>Revisar</Btn></td></Row>)}
+              {invs.map(i => <Row key={i.id} sel={i.id === sel} onOpen={() => setSel(i.id)}><td data-l="Cuenta"><b>{orgName(w, i.orgId)}</b></td><td data-l="Concepto">{i.concept}</td><td data-l="Monto" className="r tnum">{money(i.amount)}</td><td data-l="Operación">{i.payment ? <>{PAY_LABEL[i.payment.method]} · {i.payment.operation}<div className="cap">{i.payment.payerName ?? 'sin titular'}{i.payment.securityCode ? ` · código ${i.payment.securityCode}` : ''}</div></> : '—'}</td><td data-l=""><Btn sm kind="sec" onClick={(e: any) => { e.stopPropagation(); setSel(i.id); }}>Revisar</Btn></td></Row>)}
+            </tbody></table>
+          {sts.length + invs.length === 0 && <p className="wnote">No hay pagos por conciliar.</p>}
+        </div>
+        {sel && w.statements[sel] && <StatementPanel id={sel} key={sel} onClose={() => setSel(undefined)} />}
+        {inv && inv.payment && <div className="wcard" key={inv.id}>
+          <div className="row between"><h2>{inv.concept}</h2><button className="linkbtn" onClick={() => setSel(undefined)}>Cerrar</button></div>
+          <div className="wnote" style={{ marginTop: '-6px' }}>{orgName(w, inv.orgId)} · búscalo en la cuenta de Mesagri</div>
+          <ProofTable pay={inv.payment} amount={inv.amount} />
+          <div style={{ marginTop: '10px' }}><InvoiceActions id={inv.id} /></div>
+          <p className="wnote">La MYPE ya compra con su membresía activa. Si el pago no aparece, vuelve a como estaba antes de pagar.</p>
+        </div>}
       </div>
-      {sel && w.statements[sel] && <StatementPanel id={sel} key={sel} onClose={() => setSel(undefined)} />}
     </div>
   );
 }

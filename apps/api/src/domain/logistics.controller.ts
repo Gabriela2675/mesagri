@@ -133,12 +133,12 @@ export class BillingController {
 
   @Post('subscription/change') @Auth('BUYER')
   @ApiOperation({ summary: 'Sube de plan (en el mes gratis, sin cobrar la diferencia)' })
-  @Body$({ plan: 'PRO', method: 'YAPE', operation: '05129999' }, ['plan'])
+  @Body$({ plan: 'PRO', method: 'YAPE', operation: '05129999', payerName: 'Rosario Valdivia' }, ['plan'])
   change(@Me() u: AuthUser, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'SUB_UPGRADE', b, k); }
 
   @Post('invoices/:id/pay') @Auth('BUYER')
-  @ApiOperation({ summary: 'Pago de la membresía con número de operación' })
-  @Body$({ method: 'YAPE', operation: '05128888' }, ['method', 'operation'])
+  @ApiOperation({ summary: 'Pago de la membresía con número de operación', description: 'La membresía se activa al instante; el equipo la concilia con el extracto de Mesagri. Si el pago no aparece, vuelve a como estaba.' })
+  @Body$({ method: 'YAPE', operation: '05128888', payerName: 'Rosario Valdivia', securityCode: '118' }, ['method', 'operation'])
   payInvoice(@Me() u: AuthUser, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'SUB_PAY', b, k); }
 
   @Get('statements') @Auth('FARMER', 'WAREHOUSE', 'CARRIER')
@@ -156,8 +156,8 @@ export class BillingController {
   }
 
   @Post('statements/:id/pay') @Auth('FARMER', 'WAREHOUSE', 'CARRIER')
-  @ApiOperation({ summary: 'Pago con número de operación (una constancia no paga dos cargos)' })
-  @Body$({ method: 'YAPE', operation: '05127777' }, ['method', 'operation'])
+  @ApiOperation({ summary: 'Pago con número de operación (una constancia no paga dos cargos)', description: 'Con payerName y, en Yape, securityCode: el equipo lo busca en el extracto de Mesagri.' })
+  @Body$({ method: 'YAPE', operation: '05127777', payerName: 'Wilber Huamaní', securityCode: '305' }, ['method', 'operation'])
   pay(@Me() u: AuthUser, @Param('id') id: string, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'STATEMENT_PAY', { ...b, statementId: id }, k); }
 
   @Post('statements/:id/dispute') @Auth('FARMER', 'WAREHOUSE', 'CARRIER')

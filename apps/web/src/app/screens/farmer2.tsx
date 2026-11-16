@@ -19,9 +19,11 @@ import { r2 } from '@mesagri/shared/rules';
 import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { districtOptions } from './onboarding';
-import { PrefsSheet, PrivacySheet, NameSheet, PermsSheet } from './common';
+import { textSizeLabel, PrefsSheet, PrivacySheet, NameSheet, PermsSheet } from './common';
 import { canAskPermissions } from '../platform';
 import type { Statement } from '@mesagri/shared/types';
+import { mesagriData } from '@mesagri/shared/queries';
+import { MesagriAccountCard, ProofFields, MethodSeg, mesagriMethods, mesagriAccount, proofMissing, proofPayload, emptyProof, fmtPhone, type Proof, type MesagriMethod } from '../ui/pay';
 
 /* ---------- A-16 · Mis chacras ---------- */
 function Farms() {
@@ -163,7 +165,7 @@ function Profile() {
         <Card><div className="list">
           {item('user', 'Tu nombre', `Te llamamos ${me.shortName}`, () => A.sheet(<NameSheet />))}
           {canAskPermissions() && item('smartphone', 'Permisos de la app', 'Cámara, micrófono y ubicación', () => A.sheet(<PermsSheet />))}
-          {item('globe', 'Idioma', `${me.prefs.lang === 'es' ? 'Castellano' : me.prefs.lang === 'qu' ? 'Runasimi' : 'Aymar aru'} · guía de audio ${me.prefs.audioGuide ? 'activada' : 'apagada'}`, () => A.sheet(<PrefsSheet />))}
+          {item('globe', 'Idioma y letra', `${me.prefs.lang === 'es' ? 'Castellano' : me.prefs.lang === 'qu' ? 'Runasimi' : 'Aymar aru'} · letra ${textSizeLabel(me.prefs.textScale)} · guía de audio ${me.prefs.audioGuide ? 'activada' : 'apagada'}`, () => A.sheet(<PrefsSheet />))}
           {item('banknote', 'Cuentas de cobro', acct ? `${acct.kind === 'BANK' ? 'Cuenta' : acct.kind === 'PLIN' ? 'Plin' : 'Yape'} ···· ${acct.number.slice(-3)} · ${acct.relation === 'PROPIA' ? 'a mi nombre' : 'de ' + acct.holder}${org.acceptsCash ? ' · y efectivo' : ''}` : org.acceptsCash ? 'Solo efectivo' : 'Sin cuenta', () => A.go('A-06'))}
           {item('map', 'Mis chacras y zonas', `${farms.length} ${farms.length === 1 ? 'chacra' : 'chacras'} · entrega en ${org.serviceAreas.length} distritos`, () => A.sheet(<SheetBody title="Chacras y zonas"><Btn full kind="sec" icon="sprout" onClick={() => A.go('A-16')}>Mis chacras</Btn><Btn full kind="sec" icon="map-pin" onClick={() => A.go('A-07')}>Zonas y días de entrega</Btn></SheetBody>))}
           {item('users', 'Quién puede publicar por mí', 'Un familiar o el promotor de tu asociación', () => A.go('A-28'))}
@@ -230,7 +232,14 @@ function Sales() {
 }
 
 /* ---------- A-26 · Estado de cuenta (también C-13 y T-17) ---------- */
-export const MESAGRI_YAPE = '900 000 100';
+/** Cómo pagarle a Mesagri, en una línea (para los PDF). */
+export function mesagriPayLine(A: AppCtx): string {
+  const d = mesagriData(A.w);
+  const yape = mesagriAccount(d.accounts, 'YAPE');
+  const bank = mesagriAccount(d.accounts, 'TRANSFER');
+  const parts = [yape ? `${yape.kind === 'PLIN' ? 'Plin' : 'Yape'} ${fmtPhone(yape.number)} a nombre de ${yape.holder}` : '', bank ? `transferencia a ${bank.bank ?? 'la cuenta'} (CCI ${bank.cci ?? bank.number}) a nombre de ${bank.holder}` : ''].filter(Boolean);
+  return `Paga con ${parts.join(' o ')}${d.example ? ' (datos de ejemplo)' : ''} y registra en la app el número de operación y a nombre de quién sale el pago.`;
+}
 export async function downloadStatement(A: AppCtx, st: Statement) {
   const org = A.w.orgs[st.orgId];
   const kindLabel = st.kind === 'FARMER' ? 'Comisión de agricultor (3 % desde la 6.ª venta)' : st.kind === 'WAREHOUSE' ? 'Comisión de almacén aliado (10 % del alquiler)' : 'Comisión de transportista aliado (10 % del flete)';
@@ -238,7 +247,7 @@ export async function downloadStatement(A: AppCtx, st: Statement) {
     kicker: 'Estado de cuenta', badge: st.code, title: `Estado de cuenta de ${periodLabel(st.period)}`, subtitle: `${org?.name ?? ''}${org?.ruc ? ` · RUC ${org.ruc}` : org?.dni ? ` · DNI ${org.dni.slice(0, 1)}•••••${org.dni.slice(6)}` : ''} · ${kindLabel}`,
     rows: [['Emitido', dateNum(st.issuedAt)], ['Vence', dateNum(st.dueAt)], ['Base del mes', money(st.base)], ['Estado', ({ ISSUED: 'Emitido', PAYMENT_REGISTERED: 'Pago registrado', PAID: 'Pagado', OVERDUE: 'Vencido', VOID: 'Anulado' } as any)[st.status]], ...(st.receiptNumber ? [['Comprobante de Mesagri', st.receiptNumber] as [string, string]] : [])],
     table: { cols: ['Concepto', 'Base', 'Tasa', 'Monto'], align: ['left', 'right', 'right', 'right'], rows: st.items.map(i => [i.label + (i.voided ? ' (anulado)' : ''), money(i.base), i.rate ? pct(i.rate) : '—', money(i.voided ? 0 : i.amount)]), total: ['Total a pagar', money(st.total)] },
-    notes: [`Paga con Yape a Mesagri S.A.C. (${MESAGRI_YAPE}, número de ejemplo) o por transferencia y registra el número de operación en la app.`, st.kind === 'FARMER' ? 'Si no se paga hasta el día 10, no podrás publicar hasta ponerte al día (RN-40). Tus pedidos en curso siguen.' : st.kind === 'CARRIER' ? 'Si no se paga hasta el día 10, dejas de recibir ofertas nuevas (RN-40).' : 'Si no se paga hasta el día 10, no recibes reservas nuevas (RN-40).', 'Mesagri no recibe el dinero de las ventas, alquileres ni fletes: solo cobra su comisión.'],
+    notes: [mesagriPayLine(A), st.kind === 'FARMER' ? 'Si no se paga hasta el día 10, no podrás publicar hasta ponerte al día (RN-40). Tus pedidos en curso siguen.' : st.kind === 'CARRIER' ? 'Si no se paga hasta el día 10, dejas de recibir ofertas nuevas (RN-40).' : 'Si no se paga hasta el día 10, no recibes reservas nuevas (RN-40).', 'Mesagri no recibe el dinero de las ventas, alquileres ni fletes: solo cobra su comisión.'],
   });
   const r = await saveFile(`${st.code}.pdf`, bytes);
   if (r === 'error' || r === 'unavailable') A.toast(r === 'unavailable' ? SAVE_UNAVAILABLE : 'No pudimos descargar el PDF.', 'err');
@@ -257,7 +266,7 @@ export function StatementView() {
     : st.kind === 'WAREHOUSE' ? `10 % del alquiler del mes (${money(st.base)})` : `Comisión de Mesagri: 10 % de tus fletes (${money(st.base)})`;
   const canPay = ['ISSUED', 'OVERDUE'].includes(st.status) && st.total > 0;
   return (
-    <Screen title="Estado de cuenta" sub={st.kind === 'FARMER' ? 'Comisión de Mesagri' : st.kind === 'WAREHOUSE' ? 'Comisión del alquiler' : `Emitido el ${dateShort(st.issuedAt)}`} foot={canPay ? <Btn full onClick={() => A.sheet(<PayStatement id={st.id} />)}>Pagar {money(st.total)} con Yape</Btn> : undefined}>
+    <Screen title="Estado de cuenta" sub={st.kind === 'FARMER' ? 'Comisión de Mesagri' : st.kind === 'WAREHOUSE' ? 'Comisión del alquiler' : `Emitido el ${dateShort(st.issuedAt)}`} foot={canPay ? <Btn full onClick={() => A.sheet(<PayStatement id={st.id} />)}>Pagar {money(st.total)}</Btn> : undefined}>
       <div className="stack">
         {st.status === 'OVERDUE' && <Note icon="triangle-alert" tone="danger">{st.kind === 'FARMER' ? 'Venció: no puedes publicar hasta pagar' : st.kind === 'CARRIER' ? 'Venció: no recibes ofertas nuevas hasta pagar' : 'Venció: no recibes reservas nuevas hasta pagar'}. Lo que está en curso sigue (RN-40).</Note>}
         <Card tone="dark">
@@ -291,15 +300,17 @@ export function StatementView() {
 function PayStatement({ id }: { id: string }) {
   const A = useApp();
   const st = A.w.statements[id];
-  const [method, setMethod] = useState<'YAPE' | 'PLIN' | 'TRANSFER'>('YAPE');
-  const [op, setOp] = useState('');
+  const methods = mesagriMethods(mesagriData(A.w).accounts);
+  const [method, setMethod] = useState<MesagriMethod>(methods[0]);
+  const [proof, setProof] = useState<Proof>(emptyProof(A.me?.name ?? ''));
+  const why = permWhy(A.w, A.me, 'STATEMENT_PAY') || proofMissing(proof, method);
   return (
-    <SheetBody title={`Pagar ${money(st.total)}`} sub="Paga desde tu app y escribe el número de operación.">
-      <Seg value={method} onChange={setMethod} options={[{ v: 'YAPE', l: 'Yape' }, { v: 'PLIN', l: 'Plin' }, { v: 'TRANSFER', l: 'Transferencia' }]} />
-      <Card tone="soft"><Kv rows={[['A nombre de', 'Mesagri S.A.C.'], [method === 'TRANSFER' ? 'Cuenta (CCI)' : 'Número', method === 'TRANSFER' ? '002 215 000000000000 01 (ejemplo)' : `${MESAGRI_YAPE} (ejemplo)`], ['Monto', money(st.total)], ['Referencia', st.code]]} /></Card>
-      <Field label="N.º de operación"><Inp value={op} onInput={(v) => setOp(v.replace(/\D/g, ''))} mode="numeric" placeholder="05123987" label="Número de operación" /></Field>
+    <SheetBody title={`Pagar ${money(st.total)}`} sub="Paga desde tu app y escribe los datos de tu constancia: así encontramos tu pago en nuestra cuenta.">
+      <MethodSeg value={method} onChange={setMethod} methods={methods} />
+      <MesagriAccountCard method={method} amount={st.total} reference={st.code} />
+      <ProofFields value={proof} onChange={setProof} method={method} to="Mesagri" amount={st.total} />
       <Note icon="shield-check">Mesagri nunca te pedirá tu clave del banco ni de Yape.</Note>
-      <Btn full disabled={!!permWhy(A.w, A.me, 'STATEMENT_PAY')} why={permWhy(A.w, A.me, 'STATEMENT_PAY')} onClick={() => { if (A.act('STATEMENT_PAY', { statementId: id, method, operation: op }, { ok: 'Pago registrado: ya puedes operar con normalidad.' }).ok) A.sheet(null); }}>Registrar pago</Btn>
+      <Btn full disabled={!!why} why={why || undefined} onClick={() => { if (A.act('STATEMENT_PAY', { statementId: id, method, ...proofPayload(proof, method) }, { ok: 'Pago registrado: ya puedes operar con normalidad.' }).ok) A.sheet(null); }}>Registrar pago</Btn>
     </SheetBody>
   );
 }

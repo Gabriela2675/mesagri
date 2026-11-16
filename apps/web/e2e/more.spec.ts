@@ -77,7 +77,7 @@ test('estado de cuenta: Wilber paga su comisión por Yape y Gaby lo concilia en 
   const f = phone(page, 0);
   await f.getByRole('button', { name: /Estado de cuenta: S\/ 41,40/ }).click();
   await expect(screen(f)).toHaveAttribute('data-screen', 'A-26');
-  await tap(f, /Pagar S\/ 41,40 con Yape/);
+  await tap(f, /^Pagar S\/ 41,40/);
   await f.getByRole('dialog').getByLabel('Número de operación').fill('08812345');
   await f.getByRole('dialog').getByRole('button', { name: 'Registrar pago' }).click();
   await expect(f.getByText('Pago por conciliar')).toBeVisible();
@@ -86,7 +86,7 @@ test('estado de cuenta: Wilber paga su comisión por Yape y Gaby lo concilia en 
   await expect(screen(w)).toHaveAttribute('data-screen', 'W-14');
   await w.getByRole('tab', { name: /^Conciliación/ }).click();
   await w.locator('tr').filter({ hasText: 'Wilber' }).first().click();
-  await tap(w, 'Coincide: emitir comprobante');
+  await tap(w, 'Aparece: emitir comprobante');
   await page.getByRole('tab', { name: /Celulares/ }).click();
   await expect(phone(page, 0).getByText(/^Pagado/).first()).toBeVisible();
   expect(errors).toEqual([]);
@@ -152,9 +152,9 @@ test('registro: un agricultor nuevo completa los 5 pasos y Lucía aprueba su niv
 test('panel web: cada rol ve solo sus secciones y todas abren sin errores (Ley 29733)', async ({ page }) => {
   const errors = await start(page);
   const expected: Record<string, RegExp[]> = {
-    Majo: [/^Inicio/, /^Verificaciones/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Almacenes/, /^Transportistas/, /^Cobros/, /^Catálogo/, /^Reglas|^Configuración/, /^Reportes/, /^Reclamos|^Libro/, /^Auditoría/, /^Equipo/],
+    Majo: [/^Inicio/, /^Verificaciones/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Almacenes/, /^Transportistas/, /^Cobros/, /^Catálogo/, /^Reglas|^Configuración/, /^Reportes/, /^Mensajes de ayuda/, /^Reclamos|^Libro/, /^Auditoría/, /^Equipo/],
     Lucía: [/^Inicio/, /^Verificaciones/, /^Almacenes/, /^Transportistas/, /^Usuarios/],
-    Diana: [/^Inicio/, /^Envíos/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Reclamos|^Libro/],
+    Diana: [/^Inicio/, /^Envíos/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Mensajes de ayuda/, /^Reclamos|^Libro/],
     Ana: [/^Inicio/, /^Reportes/],
   };
   for (const [who, sections] of Object.entries(expected)) {

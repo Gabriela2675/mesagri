@@ -208,7 +208,7 @@ function base(w: World) {
     subscription: { plan: 'BASICO', status: 'TRIAL', trialEndsOn: T(11, 13, 11), paidUntil: T(11, 13, 11), monthsBelow: 0, history: [{ at: T(10, 14, 11), text: 'Plan Básico con el primer mes gratis (RN-35).' }] },
   });
   geranios.seedRating = { avg: 4.9, count: 6 };
-  mkUser(w, { id: 'u-charo', name: 'Rosario Valdivia Cárdenas', shortName: 'Charo', title: 'Doña Charo', persona: 'B1', phone: '959300412', role: 'BUYER', orgId: 'org-geranios', dni: '29337412', createdAt: T(10, 14, 11) }, { textScale: 1.25 });
+  mkUser(w, { id: 'u-charo', name: 'Rosario Valdivia Cárdenas', shortName: 'Charo', title: 'Doña Charo', persona: 'B1', phone: '959300412', role: 'BUYER', orgId: 'org-geranios', dni: '29337412', createdAt: T(10, 14, 11) });
 
   const hotel = mkOrg(w, {
     id: 'org-hotel', type: 'BUYER', name: 'Hotel Los Andes', legalName: 'Hotel Los Andes S.A.C.', ruc: RUC.hotel, district: '040101', level: 2,

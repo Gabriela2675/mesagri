@@ -40,6 +40,7 @@ export function applyEvent(w: World, e: MEvent): any {
   tick(w, e.t);
   const actor = e.actor === 'system' ? SYSTEM_USER : w.users[e.actor];
   if (!actor && e.type !== 'USER_REGISTER') throw new DomainError('NO_USER', 'Primero inicia sesión.');
+  if (actor && actor.status === 'DELETED') throw new DomainError('DELETED', 'Esta cuenta se eliminó. Si es un error, escríbele a Soporte de Mesagri.');
   if (actor && actor.status === 'SUSPENDED') {
     if (actor.role === 'ADMIN') throw new DomainError('SUSPENDED', 'La administración general pausó tu acceso al panel.');
     // a quien el titular pausó (equipo de la MYPE o quien publica por el agricultor) se le dice quién lo pausó

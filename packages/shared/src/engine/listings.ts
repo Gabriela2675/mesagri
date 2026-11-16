@@ -148,13 +148,26 @@ on('LISTING_REMOVE', (c) => {
 on('LISTING_MODERATE', (c) => {
   requireAdmin(c.a, 'GENERAL', 'SUPPORT', 'VERIFIER');
   const l = must(c.w.listings[c.e.p.listingId], 'NOT_FOUND', 'No encontramos la publicación.');
-  const d = c.e.p.decision as 'APPROVE' | 'REJECT' | 'PAUSE';
+  // APPROVE: se ve · PAUSE: pide corrección (el agricultor la reactiva) · REJECT: oculta · REMOVE: la elimina y borra sus fotos
+  const d = c.e.p.decision as 'APPROVE' | 'REJECT' | 'PAUSE' | 'REMOVE';
+  if (!['APPROVE', 'REJECT', 'PAUSE', 'REMOVE'].includes(d)) fail('BAD_DECISION', 'Elige qué hacer con la publicación.');
   const reason = String(c.e.p.reason ?? '').trim();
   if (d !== 'APPROVE' && reason.length < 5) fail('REASON_REQUIRED', 'Escribe el motivo: el agricultor lo va a leer.');
+  const o = c.w.orgs[l.orgId];
+  if (d === 'APPROVE' && o?.status === 'DELETED') fail('DELETED', 'La cuenta de ese agricultor se eliminó.');
+  if (l.status === 'REMOVED') fail('ALREADY', 'Esa publicación ya se eliminó: no vuelve al catálogo (el agricultor puede publicar otra).');
   const before = l.status;
-  if (d === 'APPROVE') { l.status = l.available > 0 ? 'ACTIVE' : 'SOLD_OUT'; l.reviewReason = undefined; l.flags = undefined; }
-  if (d === 'REJECT') { if (l.reserved > 0) fail('RESERVED', 'Tiene pedidos en curso.'); l.status = 'REJECTED'; l.reviewReason = reason; }
+  if (d === 'APPROVE') { l.status = l.available > 0 ? 'ACTIVE' : 'SOLD_OUT'; l.reviewReason = undefined; l.flags = undefined; if (l.expiresAt <= c.t) l.expiresAt = c.t + product(l.productId).perishDays * DAY; }
+  // los pedidos que ya tenía siguen su curso: solo deja de verse en el catálogo
+  if (d === 'REJECT') { l.status = 'REJECTED'; l.reviewReason = reason; }
   if (d === 'PAUSE') { l.status = 'PAUSED'; l.reviewReason = reason; }
-  audit(c, c.a.id, 'MODERACIÓN', l.id, `${product(l.productId).name} de ${c.w.orgs[l.orgId]?.name}: ${d}${reason ? ' · ' + reason : ''}`, before, l.status);
-  notify(c, l.orgId, 'SYSTEM', d === 'APPROVE' ? 'Tu publicación ya se ve' : 'Revisamos tu publicación', d === 'APPROVE' ? `${product(l.productId).name} ya aparece en el catálogo.` : reason);
+  if (d === 'REMOVE') {
+    l.status = 'REMOVED'; l.reviewReason = reason; l.photoIds = []; l.harvestSeal = false; l.flags = undefined;
+    if (l.fromLotId && c.w.lots[l.fromLotId]?.status === 'FOR_SALE') c.w.lots[l.fromLotId].status = 'IN_DEPOSIT';
+  }
+  if (l.reviewReason === undefined) delete l.reviewReason;
+  if (l.flags === undefined) delete l.flags;
+  const label = { APPROVE: 'APROBADA', REJECT: 'OCULTADA', PAUSE: 'CORRECCIÓN PEDIDA', REMOVE: 'ELIMINADA' }[d];
+  audit(c, c.a.id, 'MODERACIÓN', l.id, `${product(l.productId).name} de ${o?.name}: ${label}${reason ? ' · ' + reason : ''}${l.reserved > 0 && d !== 'APPROVE' && d !== 'PAUSE' ? ' · sus pedidos en curso siguen' : ''}`, before, l.status);
+  if (o?.status !== 'DELETED') notify(c, l.orgId, 'SYSTEM', d === 'APPROVE' ? 'Tu publicación ya se ve' : d === 'REMOVE' ? 'Eliminamos tu publicación' : 'Revisamos tu publicación', d === 'APPROVE' ? `${product(l.productId).name} ya aparece en el catálogo.` : `${product(l.productId).name}: ${reason}`, { screen: 'A-09' });
 });

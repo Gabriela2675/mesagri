@@ -19,9 +19,10 @@ import { orgName, userOfOrg, levelChip, PAY_LABEL, itemsShort, shipStatusText, s
 import { placeLabel, districtName } from '@mesagri/shared/ubigeo';
 import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE, callPhone } from '../platform';
-import { PrefsSheet, PrivacySheet, NameSheet, PermsSheet } from './common';
+import { textSizeLabel, PrefsSheet, PrivacySheet, NameSheet, PermsSheet } from './common';
 import { canAskPermissions } from '../platform';
-import { MESAGRI_YAPE } from './farmer2';
+import { mesagriData } from '@mesagri/shared/queries';
+import { MesagriAccountCard, ProofFields, MethodSeg, mesagriMethods, mesagriAccount, proofMissing, proofPayload, emptyProof, fmtPhone, fmtCci, type Proof, type MesagriMethod } from '../ui/pay';
 import type { Org, Shipment, SubOrder, World, PayMethod } from '@mesagri/shared/types';
 
 type Plan = 'BASICO' | 'PRO' | 'EMPRESA';
@@ -91,7 +92,7 @@ function Membership() {
         <Card><div className="list">
           {item('user', 'Tu nombre', `Te llamamos ${me.shortName}`, () => A.sheet(<NameSheet />))}
           {canAskPermissions() && item('smartphone', 'Permisos de la app', 'Cámara para las fotos', () => A.sheet(<PermsSheet />))}
-          {item('globe', 'Idioma y letra', `Castellano · letra ${me.prefs.textScale > 1.1 ? 'grande' : 'normal'}`, () => A.sheet(<PrefsSheet />))}
+          {item('globe', 'Idioma y letra', `Castellano · letra ${textSizeLabel(me.prefs.textScale)}`, () => A.sheet(<PrefsSheet />))}
           {item('message-circle', 'Mensajes', 'Conversaciones por pedido', () => A.go('A-18'))}
           {item('lock', 'Privacidad y mis datos', 'Descargar o borrar mis datos', () => A.sheet(<PrivacySheet />))}
           {item('circle-question-mark', 'Ayuda', 'Preguntas, WhatsApp y libro de reclamaciones', () => A.go('A-19'))}
@@ -108,15 +109,19 @@ function UpgradeSheet({ to }: { to: Plan }) {
   const s = A.w.settings;
   const trial = sub.status === 'TRIAL';
   const diff = r2(s.plans[to].price - s.plans[sub.plan].price);
-  const [op, setOp] = useState('');
+  const methods = mesagriMethods(mesagriData(A.w).accounts);
+  const [method, setMethod] = useState<MesagriMethod>(methods[0]);
+  const [proof, setProof] = useState<Proof>(emptyProof(A.me?.name ?? ''));
+  const why = trial ? '' : proofMissing(proof, method);
   return (
     <SheetBody title={`Pasar a ${s.plans[to].name}`} sub={trial ? `Estás en tu mes gratis: el cambio no cuesta nada hasta el ${dateShort(sub.trialEndsOn)}.` : `Este mes pagas solo la diferencia: ${money(diff)}. Luego, ${money(s.plans[to].price)} al mes.`}>
       <Card tone="soft"><div className="stack tight">{s.plans[to].features.map(f => <div key={f} className="row top g8"><Icon n="check" s="1.05em" /><span className="bodym">{f}</span></div>)}</div></Card>
       {!trial && <>
-        <Card><Kv rows={[['Yape a', `Mesagri S.A.C. · ${MESAGRI_YAPE} (ejemplo)`], ['Monto', money(diff)]]} /></Card>
-        <Field label="N.º de operación"><Inp value={op} onInput={(v) => setOp(v.replace(/\D/g, ''))} mode="numeric" placeholder="05123987" label="Número de operación" /></Field>
+        <MethodSeg value={method} onChange={setMethod} methods={methods} />
+        <MesagriAccountCard method={method} amount={diff} reference={`Plan ${s.plans[to].name}`} />
+        <ProofFields value={proof} onChange={setProof} method={method} to="Mesagri" amount={diff} />
       </>}
-      <Btn full onClick={() => { if (A.act('SUB_UPGRADE', { plan: to, method: 'YAPE', operation: op }, { ok: `Ya tienes el plan ${s.plans[to].name}.` }).ok) A.sheet(null); }}>{trial ? `Pasar a ${s.plans[to].name} sin costo` : `Pagar ${money(diff)} y pasar a ${s.plans[to].name}`}</Btn>
+      <Btn full disabled={!!why} why={why || undefined} onClick={() => { if (A.act('SUB_UPGRADE', { plan: to, method, ...(trial ? {} : proofPayload(proof, method)) }, { ok: `Ya tienes el plan ${s.plans[to].name}.` }).ok) A.sheet(null); }}>{trial ? `Pasar a ${s.plans[to].name} sin costo` : `Pagar ${money(diff)} y pasar a ${s.plans[to].name}`}</Btn>
     </SheetBody>
   );
 }
@@ -273,33 +278,47 @@ function PayMembership() {
   const A = useApp();
   const org = A.org!;
   const sub = org.subscription;
-  const [method, setMethod] = useState<PayMethod>('YAPE');
-  const [op, setOp] = useState('');
+  const data = mesagriData(A.w);
+  const methods: PayMethod[] = [...mesagriMethods(data.accounts), ...(data.example ? ['CARD' as PayMethod] : [])];
+  const [method, setMethod] = useState<PayMethod>(methods[0]);
+  const [proof, setProof] = useState<Proof>(emptyProof(A.me?.name ?? ''));
   if (!sub) return <Screen title="Pagar membresía"><Empty title="Tu cuenta no tiene membresía" /></Screen>;
   const plan = A.w.settings.plans[sub.plan];
   const period = periodOf(sub.paidUntil);
   const graceEnd = sub.graceUntil ?? sub.paidUntil + A.w.settings.membership.graceDays * DAY;
   const chip = sub.status === 'TRIAL' ? `Gratis hasta el ${dateShort(sub.trialEndsOn)}` : sub.status === 'ACTIVE' ? `Pagado hasta el ${dateShort(sub.paidUntil)}` : sub.status === 'GRACE' ? `Paga hasta el ${dateShort(graceEnd)}` : 'Sin membresía';
+  const inv = Object.values(A.w.invoices).filter(i => i.orgId === org.id && i.reconcileNote && i.status === 'ISSUED').sort((a, b) => b.issuedAt - a.issuedAt)[0];
+  const why = method === 'CARD' ? '' : proofMissing(proof, method);
   const pay = () => {
-    const r = A.act('SUB_PAY', { method, operation: method === 'CARD' ? '' : op }, { ok: `Membresía pagada: plan ${plan.name} activo.` });
+    const r = A.act('SUB_PAY', { method, ...(method === 'CARD' ? { operation: '' } : proofPayload(proof, method)) }, { ok: `Membresía pagada: plan ${plan.name} activo.` });
     if (r.ok) A.back();
   };
+  const label = (m: PayMethod) => {
+    const acc = m === 'CARD' ? undefined : mesagriAccount(data.accounts, m as MesagriMethod);
+    if (m === 'CARD') return 'En el piloto se paga en la pasarela del banco; aquí se simula sin pedir datos de tarjeta';
+    if (!acc) return '';
+    return `A ${acc.holder} · ${acc.kind === 'BANK' ? `CCI ${fmtCci(acc.cci ?? acc.number)}` : fmtPhone(acc.number)}${data.example ? ' (ejemplo)' : ''}`;
+  };
   return (
-    <Screen title="Pagar membresía" sub={org.name} foot={<><Btn full onClick={pay}>Pagar {money(plan.price)}</Btn><div className="why">Si no pagas hasta el {dateShort(graceEnd)}, tu cuenta queda sin membresía: no puedes comprar, pero conservas tu historial (RN-35).</div></>}>
+    <Screen title="Pagar membresía" sub={org.name} foot={<><Btn full onClick={pay} disabled={!!why} why={why || undefined}>Pagar {money(plan.price)}</Btn><div className="why">Si no pagas hasta el {dateShort(graceEnd)}, tu cuenta queda sin membresía: no puedes comprar, pero conservas tu historial (RN-35).</div></>}>
       <div className="stack">
         <Card tone="dark">
           <div className="row between wrap"><span className="cap b" style={{ letterSpacing: ".1em", color: "var(--leaf)" }}>PLAN {plan.name.toUpperCase()} · {periodLabel(period).toUpperCase()}</span><span className={'chip ' + (sub.status === 'GRACE' || sub.status === 'INACTIVE' ? 'warn' : 'leaf')}>{chip}</span></div>
           <div className="display" style={{ fontSize: "2.2em", margin: ".1em 0" }}>{money(plan.price)}</div>
           <div className="cap">Con IGV. {sub.status === 'GRACE' ? `Venció el ${dateShort(sub.paidUntil)}: tienes ${A.w.settings.membership.graceDays} días de gracia.` : sub.status === 'TRIAL' ? 'Pagar ahora no te quita el mes gratis: el pago cubre el mes siguiente.' : sub.status === 'ACTIVE' ? 'Pagas por adelantado el mes siguiente.' : 'Al pagar vuelves a comprar al instante.'}</div>
         </Card>
+        {inv && <Note icon="triangle-alert" tone="danger">No encontramos tu pago anterior: {inv.reconcileNote}</Note>}
         <div className="sect">Medio de pago</div>
-        {([['YAPE', 'Yape', `A Mesagri S.A.C. · ${MESAGRI_YAPE} (ejemplo)`], ['TRANSFER', 'Transferencia', 'CCI 002 215 000000000000 01 (ejemplo)'], ['CARD', 'Tarjeta', 'En el piloto se paga en la pasarela del banco; aquí se simula sin pedir datos de tarjeta']] as [PayMethod, string, string][]).map(([m, t, d]) => (
+        {methods.map(m => (
           <div key={m} className={'card ' + (method === m ? 'sel' : 'line')} role="radio" aria-checked={method === m ? 'true' : 'false'} tabIndex={0} style={{ cursor: "pointer" }} onClick={() => setMethod(m)} onKeyDown={(e: any) => { if (e.key === 'Enter' || e.key === ' ') setMethod(m); }}>
-            <div className="row"><span className={'radio' + (method === m ? ' on' : '')} /><div className="grow"><b className="bodym">{t}</b><div className="cap">{d}</div></div></div>
+            <div className="row"><span className={'radio' + (method === m ? ' on' : '')} /><div className="grow"><b className="bodym">{PAY_LABEL[m]}</b><div className="cap">{label(m)}</div></div></div>
           </div>
         ))}
-        {method !== 'CARD' && <Field label="N.º de operación"><Inp value={op} onInput={(v) => setOp(v.replace(/\D/g, ''))} mode="numeric" placeholder="05123987" label="Número de operación" /></Field>}
-        <Card><Kv rows={[['Factura a', `${org.legalName ?? org.name}${org.ruc ? ` · RUC ${org.ruc}` : ''}`], ['Comprobante', 'Factura electrónica de Mesagri'], ['Renovación', method === 'CARD' ? 'Automática cada mes' : 'Pagas cada mes desde tu celular']]} /></Card>
+        {method !== 'CARD' && <>
+          <MesagriAccountCard method={method as MesagriMethod} amount={plan.price} reference={`Membresía ${org.name}`} />
+          <ProofFields value={proof} onChange={setProof} method={method} to="Mesagri" amount={plan.price} />
+        </>}
+        <Card><Kv rows={[['Factura a', `${org.legalName ?? org.name}${org.ruc ? ` · RUC ${org.ruc}` : ''}`], ['Comprobante', 'Factura electrónica de Mesagri, cuando confirmemos tu pago'], ['Renovación', method === 'CARD' ? 'Automática cada mes' : 'Pagas cada mes desde tu celular']]} /></Card>
         {sub.history.length > 0 && <Card><b className="bodym">Historial</b><div className="stack tight mt">{sub.history.slice(-4).reverse().map((h, i) => <div key={i} className="row top g8"><Icon n="circle-dot" s="1em" /><div className="grow"><span className="bodym" style={{ fontSize: ".86em" }}>{h.text}</span><div className="cap">{dateShort(h.at)}</div></div></div>)}</div></Card>}
         <Note icon="shield-check">Mesagri nunca te pedirá tu clave del banco ni de Yape.</Note>
       </div>

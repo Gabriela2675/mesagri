@@ -181,6 +181,29 @@ export class EngineService implements OnModuleInit, OnApplicationShutdown {
       const r = await this.apply({ type: 'CLOCK_TICK', actor: 'system', p: {} }, true);
       if (!r.ok) this.log.warn(`Tarea programada: ${r.error.message}`);
     }
+    if (processDue && this.ready && Date.now() - this.purgedAt > 3_600_000) {
+      this.purgedAt = Date.now();
+      await this.purgeFiles();
+    }
+  }
+
+  private purgedAt = 0;
+
+  /**
+   * Plazos de los archivos (Ley 29733): las fotos del DNI y del rostro se borran a los 90 días y los
+   * audios a los 30 (`files.purge_after`, hora real). Se revisa una vez por hora. El contenido guardado
+   * en MySQL se va con la fila (file_blobs en cascada); si estaba en la carpeta, se borra también.
+   */
+  async purgeFiles(): Promise<number> {
+    const due = await rows(this.pool, 'SELECT id, storage_key FROM files WHERE purge_after IS NOT NULL AND purge_after < NOW(3) ORDER BY purge_after LIMIT 500');
+    if (!due.length) return 0;
+    await exec(this.pool, 'DELETE FROM files WHERE id IN (?)', [due.map(f => f.id)]);
+    for (const f of due) {
+      const key = String(f.storage_key ?? '');
+      if (key && !key.startsWith('db:')) fs.rmSync(path.join(CONFIG.filesDir, key), { force: true });
+    }
+    this.log.log(`Archivos vencidos borrados (Ley 29733): ${due.length}`);
+    return due.length;
   }
 
   /* ---------------- Acciones ---------------- */

@@ -14,6 +14,7 @@ import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { addBusinessDays } from '@mesagri/shared/time';
 import type { Notif } from '@mesagri/shared/types';
+import { mesagriData } from '@mesagri/shared/queries';
 
 /* ---------- A-18 · Mensajes ---------- */
 function Messages() {
@@ -121,11 +122,15 @@ function Ticket() {
   const tk = A.w.tickets[A.top.p?.id as string];
   const [text, setText] = useState('');
   if (!tk) return <Screen title="Consulta"><Empty title="No encontramos la consulta" /></Screen>;
+  const send = () => { if (A.act('TICKET_REPLY', { ticketId: tk.id, text }, { ok: tk.status === 'CLOSED' ? 'Volvimos a abrir tu consulta. Te respondemos pronto.' : 'Mensaje enviado a Soporte.' }).ok) setText(''); };
+  const last = tk.replies[tk.replies.length - 1];
+  const waiting = tk.status === 'OPEN' && (!last || A.w.users[last.by]?.role !== 'ADMIN');
   return (
-    <Screen title={`Consulta ${tk.code}`} sub={`${tk.topic} · ${tk.status === 'OPEN' ? 'abierta' : 'resuelta'}`} foot={tk.status === 'OPEN' ? <div className="row g8"><div className="grow"><Inp value={text} onInput={setText} placeholder="Escribe tu respuesta" label="Respuesta" /></div><Btn kind="dark" onClick={() => { if (A.act('TICKET_REPLY', { ticketId: tk.id, text }).ok) setText(''); }}>Enviar</Btn></div> : undefined}>
+    <Screen title={`Consulta ${tk.code}`} sub={`${tk.topic} · ${tk.status === 'OPEN' ? (waiting ? 'esperando respuesta de Soporte' : 'Soporte te respondió') : 'resuelta'}`} foot={<div className="stack tight">{tk.status === 'CLOSED' && <div className="cap center">¿Algo más? Si escribes, la consulta se vuelve a abrir.</div>}<div className="row g8"><div className="grow"><Inp value={text} onInput={setText} placeholder={tk.status === 'CLOSED' ? 'Escribe si necesitas algo más' : 'Escribe tu respuesta'} label="Respuesta" /></div><Btn kind="dark" disabled={!text.trim()} onClick={send}>Enviar</Btn></div></div>}>
       <div className="stack tight">
         <Card><div className="cap">Tú · {dateShort(tk.at)} {hhmm(tk.at)}</div><div className="bodym">{tk.text}</div></Card>
         {tk.replies.map((r, i) => <Card key={i} tone={A.w.users[r.by]?.role === 'ADMIN' ? 'soft' : undefined}><div className="cap">{A.w.users[r.by]?.role === 'ADMIN' ? 'Soporte Mesagri' : 'Tú'} · {dateShort(r.at)} {hhmm(r.at)}</div><div className="bodym">{r.text}</div></Card>)}
+        {waiting && <Note icon="clock">Soporte te responde aquí, normalmente el mismo día (lunes a sábado). Te avisamos cuando conteste.</Note>}
       </div>
     </Screen>
   );
@@ -144,6 +149,8 @@ function Help() {
   const [q, setQ] = useState('');
   const topics = TOPICS.filter(t => !q || (t.t + t.s + t.a).toLowerCase().includes(q.toLowerCase()));
   const ticket = () => A.sheet(<NewTicket />);
+  const mine = Object.values(A.w.tickets).filter(t => t.orgId === A.org?.id).sort((a, b) => (a.status === 'OPEN' ? 0 : 1) - (b.status === 'OPEN' ? 0 : 1) || b.at - a.at);
+  const wa = mesagriData(A.w).whatsapp;
   return (
     <Screen title={A.t('help.title', 'Ayuda')}>
       <div className="stack">
@@ -156,9 +163,21 @@ function Help() {
           ))}
         </div>
         {open && <Card tone="soft"><div className="row top g8"><div className="grow bodym">{TOPICS.find(t => t.k === open)!.a}</div><Spk2 text={TOPICS.find(t => t.k === open)!.a} /></div></Card>}
-        <Card>
-          <div className="row"><span className="icirc dark"><Icon n="smartphone" /></span><div className="grow"><b className="bodym">Escríbenos por WhatsApp</b><div className="cap">Lunes a sábado, 7:00 a 19:00 · en castellano o runasimi</div></div></div>
-        </Card>
+        {mine.length > 0 && <Card>
+          <b className="bodym">Tus consultas</b>
+          <div className="list mt">{mine.slice(0, 6).map(t => { const last = t.replies[t.replies.length - 1]; const answered = !!last && A.w.users[last.by]?.role === 'ADMIN'; return (
+            <button key={t.id} className="li" onClick={() => A.go('TICKET', { id: t.id })}>
+              <ICirc n={t.status === 'CLOSED' ? 'circle-check' : answered ? 'message-circle' : 'clock'} tone={t.status === 'OPEN' && answered ? 'terra' : ''} />
+              <div className="grow"><b className="bodym">{t.code} · {t.topic}</b><div className="cap ell">{t.status === 'CLOSED' ? 'Resuelta' : answered ? 'Soporte te respondió: tócala para leer' : 'Esperando respuesta'} · {relDay(t.at, A.now)}</div></div>
+              <Icon n="chevron-right" s="1.1em" />
+            </button>
+          ); })}</div>
+        </Card>}
+        {wa ? <a className="card" href={`https://wa.me/51${wa}?text=${encodeURIComponent(`Hola, soy ${A.me?.name ?? ''} (${A.org?.name ?? ''}). Necesito ayuda con Mesagri.`)}`} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <div className="row"><span className="icirc dark"><Icon n="smartphone" /></span><div className="grow"><b className="bodym">Escríbenos por WhatsApp</b><div className="cap">{wa.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')} · lunes a sábado, 7:00 a 19:00</div></div><Icon n="chevron-right" s="1.1em" /></div>
+        </a> : <Card>
+          <div className="row"><span className="icirc dark"><Icon n="message-circle" /></span><div className="grow"><b className="bodym">Escríbenos aquí</b><div className="cap">Abre una consulta: Soporte te responde en la app y te avisa.</div></div></div>
+        </Card>}
         <Btn full kind="dark" onClick={ticket}>Abrir una consulta</Btn>
         <button className="card soft" onClick={() => A.go('LIBRO')}>
           <div className="row"><Icon n="book-open" /><div className="grow"><b className="bodym">Libro de Reclamaciones</b><div className="cap">Respondemos en 15 días hábiles como máximo</div></div><Icon n="chevron-right" s="1.1em" /></div>
@@ -174,10 +193,10 @@ function NewTicket() {
   const [topic, setTopic] = useState('Pedidos');
   const [text, setText] = useState('');
   return (
-    <SheetBody title="Abrir una consulta" sub="Te respondemos aquí y por WhatsApp.">
+    <SheetBody title="Abrir una consulta" sub="Te respondemos aquí, en la app, y te avisamos.">
       <Field label="Tema"><Sel value={topic} onChange={setTopic} options={['Pedidos', 'Cobros y pagos', 'Almacenes', 'Envíos', 'Mi cuenta', 'Otro'].map(v => ({ v, l: v }))} label="Tema" /></Field>
       <Field label="Cuéntanos"><Inp area value={text} onInput={setText} placeholder="Escribe tu consulta" label="Consulta" /></Field>
-      <Btn full kind="dark" onClick={() => { const r = A.act('TICKET_OPEN', { ticketId: 'tk-' + uid(), topic, text }); if (r.ok) { A.sheet(null); A.toast(`Consulta ${r.result.code} enviada. Te respondemos pronto.`); } }}>Enviar consulta</Btn>
+      <Btn full kind="dark" onClick={() => { const id = 'tk-' + uid(); const r = A.act('TICKET_OPEN', { ticketId: id, topic, text }); if (r.ok) { A.sheet(null); A.toast(`Consulta ${r.result.code} enviada. Te respondemos aquí y te avisamos.`); A.go('TICKET', { id }); } }}>Enviar consulta</Btn>
     </SheetBody>
   );
 }
@@ -332,6 +351,9 @@ export function NameSheet() {
 }
 
 /* ---------- Preferencias (A-20) ---------- */
+/** Tamaños de letra (Perfil → Idioma y letra). */
+export const TEXT_SIZES: [0.9 | 1 | 1.25 | 1.5, string][] = [[0.9, 'Chica'], [1, 'Normal'], [1.25, 'Grande'], [1.5, 'Extra']];
+export const textSizeLabel = (v: number) => (TEXT_SIZES.find(([x]) => x === v)?.[1] ?? 'Normal').toLowerCase();
 export function PrefsSheet() {
   const A = useApp();
   const p = A.me!.prefs;
@@ -348,12 +370,16 @@ export function PrefsSheet() {
         <Tog on={p.bilingual} onChange={(v) => set({ bilingual: v })} label="Mostrar también en castellano" />
         <Tog on={p.dataSaver} onChange={(v) => set({ dataSaver: v })} label="Ahorro de datos" sub="Fotos pequeñas y sin precarga" />
       </Card>
-      <Field label="Tamaño de letra"><Seg value={p.textScale} options={[{ v: 1, l: 'Normal' }, { v: 1.25, l: 'Grande' }, { v: 1.5, l: 'Extra' }]} onChange={(v) => set({ textScale: v })} /></Field>
+      <Field label="Tamaño de letra" help="Se ve al instante en toda la app. Solo cambia en tu cuenta."><Seg value={p.textScale} options={TEXT_SIZES.map(([v, l]) => ({ v, l }))} onChange={(v) => set({ textScale: v })} /></Field>
+      <Card tone="soft"><b className="bodym">Así se lee: letra {textSizeLabel(p.textScale)}</b><div className="cap">Papa amarilla · 50 kg · S/ 2,80 el kilo</div></Card>
       <Field label="Números" help="Prueba cuál se entiende mejor (decisión pendiente de las pruebas con usuarios)."><Seg value={p.numFmt} options={[{ v: 'coma', l: 'S/ 1,50' }, { v: 'punto', l: 'S/ 1.50' }]} onChange={(v) => set({ numFmt: v })} /></Field>
       <Btn full kind="dark" onClick={() => A.sheet(null)}>Listo</Btn>
     </SheetBody>
   );
 }
+
+/** Tema de la consulta con la que una persona pide borrar su cuenta (el panel la destaca). */
+export const DELETE_TOPIC = 'Borrar mi cuenta';
 
 export function PrivacySheet() {
   const A = useApp();
@@ -372,7 +398,16 @@ export function PrivacySheet() {
     <SheetBody title="Privacidad y mis datos" sub="Tus derechos ARCO (Ley 29733): acceso, rectificación, cancelación y oposición.">
       <Kv rows={[['Distrito visible', 'Sí (obligatorio)'], ['Ubicación exacta de la chacra', 'Nunca se muestra'], ['Foto del DNI', 'Solo la ve verificación'], ['Avisos por WhatsApp', A.me!.consents?.items.whatsapp ? 'Sí' : 'No'], ['Ventas sin nombre para precios', A.me!.consents?.items.precios ? 'Sí' : 'No']]} />
       <Btn full kind="sec" icon="download" onClick={download}>Descargar una copia de mis datos</Btn>
-      <Btn full kind="secd" onClick={async () => { const ok = await A.confirm({ title: '¿Pedir el borrado de tu cuenta?', text: 'Guardamos solo lo que la ley obliga (comprobantes y Libro de Reclamaciones). Tus pedidos en curso deben terminar antes.', ok: 'Pedir borrado', danger: true }); if (ok) A.toast('Recibimos tu pedido. Te respondemos en 10 días hábiles (Ley 29733).', 'info'); }}>Pedir que borren mi cuenta</Btn>
+      <Btn full kind="secd" onClick={async () => {
+        const ok = await A.confirm({ title: '¿Pedir el borrado de tu cuenta?', text: 'Borramos tus datos personales y tus publicaciones. Guardamos solo lo que la ley obliga (pedidos y comprobantes, sin tu nombre, y el Libro de Reclamaciones). Tus pedidos en curso deben terminar antes.', ok: 'Pedir borrado', danger: true });
+        if (!ok) return;
+        const open = Object.values(A.w.tickets).find(t => t.orgId === A.org?.id && t.status === 'OPEN' && t.topic === DELETE_TOPIC);
+        if (open) { A.sheet(null); A.go('TICKET', { id: open.id }); A.toast('Ya pediste el borrado: Soporte lo está atendiendo.', 'info'); return; }
+        const id = 'tk-' + uid();
+        const r = A.act('TICKET_OPEN', { ticketId: id, topic: DELETE_TOPIC, text: 'Pido que borren mi cuenta y mis datos personales (Ley 29733, derecho de cancelación).' }, { quiet: true });
+        if (r.ok) { A.sheet(null); A.toast('Recibimos tu pedido. Te respondemos en 10 días hábiles como máximo (Ley 29733).', 'info'); A.go('TICKET', { id }); }
+        else A.toast(r.error!.message, 'err');
+      }}>Pedir que borren mi cuenta</Btn>
     </SheetBody>
   );
 }

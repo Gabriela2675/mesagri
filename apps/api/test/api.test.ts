@@ -196,6 +196,29 @@ describe('API de Mesagri', () => {
     expect((await api().get(u.body.url)).status).toBe(200);
   });
 
+  it('las fotos del DNI y del rostro se borran de verdad a los 90 días (Ley 29733)', async () => {
+    const t = await session('u-hector');
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    for (const [id, kind] of [['ph-purga-dni', 'DNI'], ['ph-purga-rostro', 'SELFIE'], ['ph-purga-foto', 'FOTO']]) {
+      expect((await api().post('/api/v1/files').set('Authorization', 'Bearer ' + t).send({ id, kind, dataUrl: png })).status).toBe(201);
+    }
+    const { rows, exec, createPool } = (await import('../dist/db/db.js' as string)) as typeof import('../src/db/db');
+    const req = createRequire(path.resolve(process.cwd(), 'package.json'));
+    const engine = app.get(req('./dist/core/engine.service.js').EngineService) as import('../src/core/engine.service').EngineService;
+    const pool = createPool(DB);
+    // todavía no vencen: no se borra nada
+    await engine.purgeFiles();
+    expect(Number((await rows(pool, "SELECT COUNT(*) AS n FROM files WHERE uuid LIKE 'ph-purga-%'"))[0].n)).toBe(3);
+    // pasaron los 90 días: se borran la foto del DNI y la del rostro con su contenido; la foto del producto queda
+    await exec(pool, "UPDATE files SET purge_after = NOW(3) - INTERVAL 1 DAY WHERE uuid IN ('ph-purga-dni', 'ph-purga-rostro')");
+    expect(await engine.purgeFiles()).toBeGreaterThanOrEqual(2);
+    expect((await rows(pool, "SELECT uuid FROM files WHERE uuid LIKE 'ph-purga-%'")).map(r => r.uuid)).toEqual(['ph-purga-foto']);
+    expect(Number((await rows(pool, 'SELECT COUNT(*) AS n FROM file_blobs b LEFT JOIN files f ON f.id = b.file_id WHERE f.id IS NULL'))[0].n)).toBe(0);
+    const lucia = await session('u-lucia');
+    expect((await api().get('/api/v1/files/ph-purga-dni/url').set('Authorization', 'Bearer ' + lucia)).status).toBe(404);
+    await pool.end();
+  });
+
   it('archivos guardados en la base de datos (en la nube el disco se borra)', async () => {
     const t = await session('u-wilber');
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
@@ -699,6 +722,38 @@ describe('API de Mesagri', () => {
     expect((await api().post('/api/v1/auth/admin/login').send({ email: 'gaby@mesagri.pe', password: 'gaby-mesagri-2026', code: totpOf(gsecret) })).status).toBe(200);
     expect((await api().get('/api/v1/demo/team')).body.map((x: any) => x.userId)).toEqual(expect.arrayContaining(['u-majo', 'u-dayis', 'u-kevin']));
     expect((await api().get('/api/v1/demo/team')).body.some((x: any) => x.userId === 'u-gaby' || x.userId === id)).toBe(false);
+  });
+
+  it('el equipo corrige el celular o elimina una cuenta: se cierran sus sesiones y no vuelve a entrar', async () => {
+    const admin = await session('u-diana');
+    const general = await session('u-majo');
+    const charo = await session('u-charo');
+    expect((await api().get('/api/v1/me').set('Authorization', 'Bearer ' + charo)).status).toBe(200);
+    // corregir el celular: la persona entra con el número nuevo; sus sesiones de refresco quedan cerradas
+    const edit = await api().put('/api/v1/admin/organizations/org-geranios').set('Authorization', 'Bearer ' + admin).send({ users: [{ userId: 'u-charo', phone: '959300499' }], reason: 'Cambió de celular' });
+    expect(edit.status, JSON.stringify(edit.body)).toBe(200);
+    const { rows, createPool } = (await import('../dist/db/db.js' as string)) as typeof import('../src/db/db');
+    const pool = createPool(DB);
+    const open = await rows(pool, "SELECT COUNT(*) AS n FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id WHERE u.uuid = 'u-charo' AND rt.revoked_at IS NULL");
+    expect(Number(open[0].n)).toBe(0);
+    expect((await api().post('/api/v1/auth/otp').send({ phone: '959300412', purpose: 'LOGIN' })).status).toBe(404);
+    expect((await api().post('/api/v1/auth/otp').send({ phone: '959300499', purpose: 'LOGIN' })).status).toBe(200);
+    // eliminar: con pedidos en curso no se puede; Soporte no puede; la administración general sí
+    const busy = await api().get('/api/v1/admin/organizations/org-wilber/deletion-check').set('Authorization', 'Bearer ' + general);
+    expect(busy.body.blockers.length).toBeGreaterThan(0);
+    expect((await api().post('/api/v1/admin/organizations/org-lucio/delete').set('Authorization', 'Bearer ' + admin).send({ reason: 'Lo pidió por la app' })).status).toBe(403);
+    const lucio = await session('u-lucio');
+    const del = await api().post('/api/v1/admin/organizations/org-lucio/delete').set('Authorization', 'Bearer ' + general).send({ reason: 'Lo pidió por la app (Ley 29733)' });
+    expect(del.status, JSON.stringify(del.body)).toBe(201);
+    const me = await api().get('/api/v1/me').set('Authorization', 'Bearer ' + lucio);
+    expect(me.status).toBe(401);
+    expect(me.body.code).toBe('DELETED');
+    expect((await api().post('/api/v1/auth/otp').send({ phone: '966209734', purpose: 'LOGIN' })).status).toBe(404);
+    const row = await rows(pool, "SELECT u.phone_e164, u.status, p.full_name, p.doc_number FROM users u JOIN user_profiles p ON p.user_id = u.id WHERE u.uuid = 'u-lucio'");
+    expect(row[0]).toMatchObject({ phone_e164: null, status: 'DELETED', full_name: 'Cuenta eliminada', doc_number: null });
+    const evs = await rows(pool, "SELECT COUNT(*) AS n FROM sync_events WHERE actor_uuid = 'u-lucio' AND JSON_EXTRACT(payload, '$.borrado') IS NULL");
+    expect(Number(evs[0].n)).toBe(0);
+    await pool.end();
   });
 
   it('reiniciar la demo cambia la época y deja sin efecto los tokens anteriores', async () => {

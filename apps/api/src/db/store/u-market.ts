@@ -26,6 +26,10 @@ export const listingsUnit: Unit = {
       expires_at: dt(l.expiresAt), request_uuid: nv(l.requestId),
     });
     ids.set('listings', l.id, id);
+    // publicación eliminada por el equipo (o de una cuenta eliminada): sus fotos se borran del almacenamiento
+    if (p && p.status !== 'REMOVED' && l.status === 'REMOVED' && !l.photoIds.length && p.photoIds.length) {
+      await exec(c, 'DELETE FROM files WHERE uuid IN (?) AND uuid NOT IN (SELECT lp.file_uuid FROM listing_photos lp JOIN listings x ON x.id = lp.listing_id WHERE x.uuid <> ?)', [p.photoIds, l.id]);
+    }
     if (changed(p, l, x => x.photoIds)) {
       await exec(c, 'DELETE FROM listing_photos WHERE listing_id = ?', [id]);
       await insertMany(c, 'listing_photos', l.photoIds.map((f, i) => ({ listing_id: id, file_uuid: String(f).slice(0, 80), position: i })));
@@ -138,6 +142,7 @@ export const subOrdersUnit: Unit = {
       const pm = s.payment;
       await upsert(c, 'payments', {
         sub_order_id: id, method: pm.method, amount: nv(pm.amount), status: pm.status, operation_code: cut(pm.operation, 40), paid_at: dt(pm.paidAt),
+        payer_name: cut(pm.payerName, 120), security_code: nv(pm.securityCode),
         proof_file_uuid: nv(pm.photoId), uploaded_at: dt(pm.uploadedAt), confirmed_at: dt(pm.confirmedAt),
       }, { keys: ['sub_order_id'] });
     }
@@ -163,6 +168,7 @@ export const subOrdersUnit: Unit = {
     const list = await rows(c, `
       SELECT s.*, o.uuid AS order_uuid, b.uuid AS buyer_uuid, se.uuid AS seller_uuid, u.uuid AS user_uuid,
              p.method AS pay_method, p.amount AS pay_amount, p.status AS pay_status, p.operation_code, p.paid_at, p.proof_file_uuid, p.uploaded_at, p.confirmed_at,
+             p.payer_name AS pay_payer, p.security_code AS pay_code,
              t.doc_kind, t.doc_number, d.delivery_code_enc, d.pickup_code, d.pickup_qr, d.code_tries, d.delivery_photo_uuid, d.receipt_photo_uuids
         FROM sub_orders s
         JOIN orders o ON o.id = s.order_id
@@ -191,7 +197,7 @@ export const subOrdersUnit: Unit = {
         deliveryCode: r.delivery_code_enc ? decrypt(r.delivery_code_enc) : '', pickupCode: ostr(r.pickup_code), pickupQr: r.pickup_qr ?? '', codeTries: r.code_tries ?? 0,
         payment: strip({
           status: r.pay_status ?? 'NONE', method: r.pay_method ?? 'YAPE', operation: ostr(r.operation_code), amount: onum(r.pay_amount), paidAt: tms(r.paid_at),
-          photoId: ostr(r.proof_file_uuid), uploadedAt: tms(r.uploaded_at), confirmedAt: tms(r.confirmed_at),
+          photoId: ostr(r.proof_file_uuid), uploadedAt: tms(r.uploaded_at), confirmedAt: tms(r.confirmed_at), payerName: ostr(r.pay_payer), securityCode: ostr(r.pay_code),
         }),
         commissionRate: Number(r.commission_rate), freeSlotReserved: !!r.free_slot_reserved, saleNumber: onum(r.sale_number), commission: onum(r.commission),
         saleAmount: onum(r.sale_amount), freeSaleBonus: ob(r.free_sale_bonus), rejectReason: ostr(r.reject_reason), cancelReason: ostr(r.cancel_reason),

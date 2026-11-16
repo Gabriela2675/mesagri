@@ -503,7 +503,7 @@ export class AuthService implements OnModuleInit {
       throw new DomainHttpError(401, 'SESSION_REUSED', 'Por seguridad cerramos tus sesiones. Ingresa de nuevo.');
     }
     const u = this.engine.world.users[r.uuid];
-    if (!u) throw new DomainHttpError(401, 'SESSION_EXPIRED', 'Tu sesión venció. Ingresa de nuevo.');
+    if (!u || u.status === 'DELETED') throw new DomainHttpError(401, 'SESSION_EXPIRED', 'Tu sesión venció. Ingresa de nuevo.');
     const next = await this.issue(r.uuid, r.device_label ?? undefined, r.family);
     await exec(this.engine.pool, 'UPDATE refresh_tokens SET revoked_at = NOW(3), replaced_by = ? WHERE id = ?', [next.rowId, r.id]);
     const { rowId: _r, ...s } = next;
@@ -526,6 +526,7 @@ export class AuthService implements OnModuleInit {
     if (t.ep !== this.engine.epoch) throw new DomainHttpError(401, 'EPOCH', 'La demo se reinició. Ingresa de nuevo.');
     const u = this.engine.world.users[t.sub];
     if (!u) throw new DomainHttpError(401, 'NO_USER', 'Tu usuario ya no existe.');
+    if (u.status === 'DELETED') throw new DomainHttpError(401, 'DELETED', 'Esta cuenta se eliminó. Si es un error, escríbele a Soporte de Mesagri.');
     // al equipo que se le pausó el acceso no le sirve la sesión que tenía abierta
     if (u.role === 'ADMIN' && u.status !== 'ACTIVE') throw new DomainHttpError(401, 'SUSPENDED', 'La administración general pausó tu acceso al panel.');
     return { id: u.id, role: u.role, adminRole: u.adminRole, orgId: u.orgId, name: u.name };

@@ -21,7 +21,8 @@ export interface Prefs {
   lang: Lang;
   audioGuide: boolean;
   bilingual: boolean;
-  textScale: 1 | 1.25 | 1.5;
+  /** tamaño de letra: 0,9 chica · 1 normal · 1,25 grande · 1,5 extra */
+  textScale: 0.9 | 1 | 1.25 | 1.5;
   dataSaver: boolean;
   numFmt: 'coma' | 'punto';
 }
@@ -42,7 +43,8 @@ export interface User {
   /** Persona de ejemplo del documento (sección 5): se muestra en el selector de la demo. */
   persona?: string;
   title?: string;
-  status: 'ACTIVE' | 'SUSPENDED';
+  /** DELETED: cuenta eliminada por el equipo (datos personales borrados; quedan los pedidos sin su nombre) */
+  status: 'ACTIVE' | 'SUSPENDED' | 'DELETED';
 }
 
 export interface PayoutAccount {
@@ -141,8 +143,11 @@ export interface Org {
   receiver?: string;           // quien recibe (comprador)
   businessType?: 'RESTAURANTE' | 'HOTEL' | 'BODEGA' | 'COMEDOR';
   level: number;               // 0 a 3 (agricultor y comprador)
-  status: 'ACTIVE' | 'SUSPENDED';
+  status: 'ACTIVE' | 'SUSPENDED' | 'DELETED';
   suspendedReason?: string;
+  /** cuenta eliminada por el equipo de Mesagri: cuándo y por qué (queda en auditoría) */
+  deletedAt?: number;
+  deletedReason?: string;
   createdAt: number;
   taxRegime?: TaxRegime;
   payout: PayoutAccount[];
@@ -417,6 +422,20 @@ export interface Payment {
   photoId?: string;
   uploadedAt?: number;
   confirmedAt?: number;
+  /** a nombre de quién sale el pago (como lo ve quien cobra en su Yape o en su banco) */
+  payerName?: string;
+  /** Yape: código de seguridad de 3 dígitos; el mismo aparece en el detalle del movimiento de quien cobra */
+  securityCode?: string;
+}
+
+/** Pago que recibe Mesagri (comisión, alquiler, flete o membresía): lo concilia el equipo con su extracto. */
+export interface BillingPay {
+  method: PayMethod;
+  operation: string;
+  at: number;
+  payerName?: string;
+  securityCode?: string;
+  photoId?: string;
 }
 
 export interface SubOrder {
@@ -575,7 +594,7 @@ export interface Statement {
   issuedAt: number;
   dueAt: number;
   status: 'ISSUED' | 'PAYMENT_REGISTERED' | 'PAID' | 'OVERDUE' | 'VOID';
-  payment?: { method: PayMethod; operation: string; at: number };
+  payment?: BillingPay;
   receiptNumber?: string;     // boleta o factura de Mesagri
   claim?: { itemId: string; reason: string; at: number; status: 'OPEN' | 'ACCEPTED' | 'REJECTED' };
   reconcileNote?: string;
@@ -591,8 +610,11 @@ export interface SubInvoice {
   issuedAt: number;
   dueAt: number;
   status: 'ISSUED' | 'PAID' | 'RECONCILED' | 'VOID';
-  payment?: { method: PayMethod; operation: string; at: number };
+  /** prev: cómo estaba la membresía antes de este pago (si el pago no aparece en el extracto, se vuelve a eso) */
+  payment?: BillingPay & { prev?: { status: Subscription['status']; paidUntil: number; graceUntil?: number; plan: Subscription['plan']; after: number } };
   receiptNumber?: string;
+  /** por qué el equipo no encontró el pago (lo lee la MYPE) */
+  reconcileNote?: string;
 }
 
 export interface SettingProposal {

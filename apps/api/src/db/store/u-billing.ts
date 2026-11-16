@@ -3,12 +3,17 @@
  * cobros de membresía, pagos que recibe Mesagri, números de operación usados, cambios de
  * configuración con doble aprobación, traducciones y favoritos.
  */
-import type { Statement, SubInvoice, SettingProposal, TranslationEntry, World } from '@mesagri/shared';
+import type { Statement, SubInvoice, SettingProposal, TranslationEntry, World, BillingPay } from '@mesagri/shared';
 import { exec, insertMany, rows, upsert, dt, js } from '../db';
 import { Unit, changed, groupBy, strip, tms, tm, ob, onum, ostr, bn, nv, cut, same } from './units';
 
 const STATEMENT_TABLE = { FARMER: 'commission_statements', WAREHOUSE: 'storage_statements', CARRIER: 'carrier_statements' } as const;
 const CONCEPT = { FARMER: 'COMISION', WAREHOUSE: 'ALMACEN', CARRIER: 'TRANSPORTE' } as const;
+
+/** Columnas del pago que recibe Mesagri: lo que ayuda a encontrarlo en el extracto. */
+const payCols = (pay: BillingPay) => ({ payer_name: cut(pay.payerName, 120), security_code: nv(pay.securityCode), proof_file_uuid: nv(pay.photoId) });
+/** Pago leído de billing_payments. */
+const payOf = (r: any): BillingPay => strip({ method: r.method, operation: r.operation_number, at: tm(r.paid_at), payerName: ostr(r.payer_name), securityCode: ostr(r.security_code), photoId: ostr(r.proof_file_uuid) } as BillingPay);
 
 /* ============================== Estados de cuenta ============================== */
 
@@ -45,7 +50,7 @@ export const statementsUnit: Unit = {
       if (pay) {
         await exec(c, 'INSERT INTO billing_payments SET ?', [{
           uuid: `${st.id}:pago`.slice(0, 80), organization_id: org, concept: CONCEPT[st.kind], ref_uuid: st.id, amount: st.total, method: pay.method,
-          operation_number: String(pay.operation).slice(0, 40), paid_at: dt(pay.at), reconciled_at: st.status === 'PAID' ? dt(w.now) : null,
+          operation_number: String(pay.operation).slice(0, 40), ...payCols(pay), paid_at: dt(pay.at), reconciled_at: st.status === 'PAID' ? dt(w.now) : null,
         }]);
       }
     }
@@ -66,7 +71,7 @@ export const statementsUnit: Unit = {
             ? (items.get(r.id) ?? []).map(i => strip({ id: i.item_uuid, ref: i.ref, label: i.label, base: Number(i.sale_amount), rate: Number(i.rate), amount: Number(i.commission), voided: ob(i.voided), voidReason: ostr(i.void_reason), saleNumber: onum(i.sale_number) }))
             : r.items ?? [],
           base: Number(kind === 'FARMER' ? r.sales_total : kind === 'WAREHOUSE' ? r.rent_total : r.freight_total), total: Number(r.commission),
-          issuedAt: tm(r.issued_at), dueAt: tm(r.due_on), status: r.status, payment: pay ? { method: pay.method, operation: pay.operation_number, at: tm(pay.paid_at) } : undefined,
+          issuedAt: tm(r.issued_at), dueAt: tm(r.due_on), status: r.status, payment: pay ? payOf(pay) : undefined,
           receiptNumber: ostr(r.receipt_number), claim: r.claim ?? undefined, reconcileNote: ostr(r.reconcile_note),
         } as Statement);
         all.push({ st, order: ki });
@@ -89,6 +94,7 @@ export const invoicesUnit: Unit = {
     const id = await upsert(c, 'subscription_invoices', {
       uuid: inv.id, subscription_id: ids.opt('subscriptions', inv.orgId), organization_id: org, period: inv.period, plan_code: inv.plan, concept: cut(inv.concept, 160) ?? '',
       amount: inv.amount, tax_document: cut(inv.receiptNumber, 30), issued_at: dt(inv.issuedAt), due_at: dt(inv.dueAt), status: inv.status,
+      reconcile_note: cut(inv.reconcileNote, 500),
     });
     ids.set('subscription_invoices', inv.id, id);
     if (!p || !same(p.payment, inv.payment) || p.status !== inv.status) {
@@ -97,7 +103,8 @@ export const invoicesUnit: Unit = {
       if (pay) {
         await exec(c, 'INSERT INTO billing_payments SET ?', [{
           uuid: `${inv.id}:pago`.slice(0, 80), organization_id: org, concept: 'MEMBRESIA', ref_uuid: inv.id, amount: inv.amount, method: pay.method,
-          operation_number: String(pay.operation).slice(0, 40), paid_at: dt(pay.at), reconciled_at: inv.status === 'RECONCILED' ? dt(w.now) : null,
+          operation_number: String(pay.operation).slice(0, 40), ...payCols(pay), revert_data: pay.prev ? js(pay.prev) : null,
+          paid_at: dt(pay.at), reconciled_at: inv.status === 'RECONCILED' ? dt(w.now) : null,
         }]);
       }
     }
@@ -108,7 +115,8 @@ export const invoicesUnit: Unit = {
       const pay = pays.get(r.uuid);
       w.invoices[r.uuid] = strip({
         id: r.uuid, orgId: r.org_uuid, period: r.period, plan: r.plan_code, concept: r.concept, amount: Number(r.amount), issuedAt: tm(r.issued_at), dueAt: tm(r.due_at),
-        status: r.status, payment: pay ? { method: pay.method, operation: pay.operation_number, at: tm(pay.paid_at) } : undefined, receiptNumber: ostr(r.tax_document),
+        status: r.status, payment: pay ? strip({ ...payOf(pay), prev: pay.revert_data ?? undefined }) : undefined, receiptNumber: ostr(r.tax_document),
+        reconcileNote: ostr(r.reconcile_note),
       } as SubInvoice);
     }
   },

@@ -9,6 +9,7 @@ import './buyer2';
 import './carrier';
 import './admin';
 import './admin2';
+import './admin3';
 import './r2';
 import './team';
 import './identity';

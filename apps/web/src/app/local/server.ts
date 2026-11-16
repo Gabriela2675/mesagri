@@ -17,6 +17,13 @@ import { uid } from '@mesagri/shared/ids';
 import { isPhoneValid, passwordProblem, isDniValid } from '@mesagri/shared/rules';
 import { registryFor, testDni, TEST_DNIS } from '@mesagri/shared/identity';
 import { SEED_ANCHOR, SEED_VERSION } from '@mesagri/shared/seed';
+import { DEFAULT_SETTINGS } from '@mesagri/shared/settings';
+
+/** Un mundo guardado por una versión anterior de la app: se completa con lo nuevo (datos de Mesagri). */
+function normalizeWorld(w: World): World {
+  if (!w.settings.mesagri) w.settings.mesagri = structuredCloneSafe(DEFAULT_SETTINGS.mesagri);
+  return w;
+}
 import { PROTOCOL } from '@mesagri/shared/protocol';
 import { ApiError } from '../net';
 import { kvGet, kvSet, kvDel } from './kv';
@@ -92,7 +99,7 @@ export class LocalServer {
   private async init() {
     const saved = await kvGet<Saved>(STATE_KEY);
     if (saved && saved.v === 1 && saved.protocol === PROTOCOL && saved.seedVersion === SEED_VERSION && saved.world && saved.epoch) {
-      this.world = saved.world;
+      this.world = normalizeWorld(saved.world);
       this.seq = saved.seq;
       this.epoch = saved.epoch;
       this.revoked = saved.revoked ?? {};
@@ -156,7 +163,7 @@ export class LocalServer {
   private async reloadFromDisk() {
     const saved = await kvGet<Saved>(STATE_KEY);
     if (!saved || saved.v !== 1 || saved.protocol !== PROTOCOL || saved.seedVersion !== SEED_VERSION || !saved.world) return;
-    this.world = saved.world;
+    this.world = normalizeWorld(saved.world);
     this.seq = saved.seq;
     this.epoch = saved.epoch;
     this.revoked = saved.revoked ?? {};

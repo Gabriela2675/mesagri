@@ -148,13 +148,36 @@ export const padronUnit: Unit = {
 
 /* ============================== Usuarios ============================== */
 
+/**
+ * Cuenta eliminada por el equipo: además de lo que ya se borró en el mundo (nombre, celular, DNI),
+ * se cierran sus sesiones, se olvidan sus celulares y códigos, se borran sus fotos de identidad y
+ * documentos y la consulta guardada de su DNI, y sus acciones guardadas quedan sin contenido.
+ */
+async function forgetUser(c: any, id: number, prev: User) {
+  await exec(c, 'UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE user_id = ? AND revoked_at IS NULL', [id]);
+  await exec(c, 'DELETE FROM trusted_devices WHERE user_id = ?', [id]);
+  if (prev.phone) await exec(c, 'DELETE FROM otp_codes WHERE phone_e164 = ?', ['+51' + prev.phone]);
+  if (prev.dni) await exec(c, 'DELETE FROM identity_lookups WHERE dni = ?', [prev.dni]);
+  await exec(c, "DELETE FROM files WHERE owner_user_id = ? AND kind IN ('DNI','SELFIE','DOCUMENTO','AUDIO')", [id]);
+  await exec(c, "UPDATE sync_events SET payload = JSON_OBJECT('borrado', TRUE), result = NULL, device = NULL WHERE actor_uuid = ?", [prev.id]);
+}
+
+
 export const usersUnit: Unit = {
   name: 'users',
   tables: ['users', 'user_profiles', 'user_preferences', 'user_roles', 'consents'],
   entries: w => Object.entries(w.users),
   async save({ c, ids }, _key, u: User, prev: User | undefined) {
-    const id = await upsert(c, 'users', { uuid: u.id, phone_e164: '+51' + u.phone, email: nv(u.email), status: u.status, created_at: dt(u.createdAt) });
+    const id = await upsert(c, 'users', { uuid: u.id, phone_e164: u.phone ? '+51' + u.phone : null, email: nv(u.email), status: u.status, created_at: dt(u.createdAt) });
     ids.set('users', u.id, id);
+    if (prev && prev.status !== 'DELETED' && u.status === 'DELETED') await forgetUser(c, id, prev);
+    else if (prev && prev.phone && prev.phone !== u.phone && u.role !== 'ADMIN') {
+      // cambió el celular con el que entra (lo corrige el equipo): se cierran sus sesiones y se olvidan sus celulares
+      // (el equipo entra al panel con su correo, no con el celular: cambiarlo no cierra su sesión)
+      await exec(c, 'UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE user_id = ? AND revoked_at IS NULL', [id]);
+      await exec(c, 'DELETE FROM trusted_devices WHERE user_id = ?', [id]);
+      await exec(c, 'DELETE FROM otp_codes WHERE phone_e164 = ?', ['+51' + prev.phone]);
+    }
     await upsert(c, 'user_profiles', {
       user_id: id, doc_type: u.dni ? 'DNI' : 'NINGUNO', doc_number: nv(u.dni), full_name: cut(u.name, 120), short_name: cut(u.shortName, 60),
       title: cut(u.title, 60), persona_code: cut(u.persona, 10),
@@ -191,7 +214,7 @@ export const usersUnit: Unit = {
     for (const r of list) {
       const ks = consents.get(r.id);
       const u: User = strip({
-        id: r.uuid, name: r.full_name, shortName: r.short_name, phone: String(r.phone_e164).replace(/^\+51/, ''), role: r.role ?? 'FARMER',
+        id: r.uuid, name: r.full_name, shortName: r.short_name, phone: r.phone_e164 ? String(r.phone_e164).replace(/^\+51/, '') : '', role: r.role ?? 'FARMER',
         adminRole: ostr(r.admin_role) as User['adminRole'], orgId: r.org_uuid ?? '', dni: ostr(r.doc_number), email: ostr(r.email), createdAt: tm(r.created_at),
         prefs: { lang: r.ui_language, audioGuide: !!r.audio_guide, bilingual: !!r.bilingual_labels, textScale: Number(r.text_scale) as User['prefs']['textScale'], dataSaver: !!r.data_saver, numFmt: r.number_format },
         consents: ks?.length ? { version: ks[0].version, at: tm(ks[0].decided_at), items: Object.fromEntries(ks.map(k => [k.purpose, !!k.granted])) } : undefined,
@@ -250,10 +273,18 @@ export const orgsUnit: Unit = {
     const id = await upsert(c, 'organizations', {
       uuid: o.id, kind: o.type, trade_name: cut(o.name, 120), legal_name: cut(o.legalName, 160), ruc: nv(o.ruc), dni: nv(o.dni),
       ubigeo: o.district, province_code: o.province, verification_level: o.level, status: o.status, suspended_reason: cut(o.suspendedReason, 500),
+      deleted_at: dt(o.deletedAt), deleted_reason: cut(o.deletedReason, 500),
       accepts_cash: !!o.acceptsCash, delivery_days: js(o.deliveryDays ?? []), pickup_point: cut(o.pickupPoint, 160),
       avatar_initials: String(o.initials ?? '').slice(0, 3), avatar_color: o.color, created_at: dt(o.createdAt),
     });
     ids.set('organizations', o.id, id);
+    if (po && po.status !== 'DELETED' && o.status === 'DELETED') {
+      // fotos de sus publicaciones y de sus chacras: se borran del almacenamiento
+      await exec(c, 'DELETE f FROM files f JOIN listing_photos lp ON lp.file_uuid = f.uuid JOIN listings l ON l.id = lp.listing_id WHERE l.organization_id = ?', [id]);
+      // las chacras se guardan después (mismo COMMIT): aquí todavía tienen sus fotos
+      const farmPhotos = (await rows(c, 'SELECT photos FROM farms WHERE organization_id = ?', [id])).flatMap(r => (Array.isArray(r.photos) ? r.photos.map(String) : []));
+      if (farmPhotos.length) await exec(c, 'DELETE FROM files WHERE uuid IN (?)', [farmPhotos]);
+    }
 
     if (changed(p, v, x => [x.m, x.o.members ?? null])) {
       await exec(c, 'DELETE FROM organization_members WHERE organization_id = ?', [id]);
@@ -396,7 +427,8 @@ export const orgsUnit: Unit = {
     }, { keys: ['organization_id'], hasId: false });
   },
   async load({ c, w }) {
-    const orgs = await rows(c, 'SELECT * FROM organizations WHERE deleted_at IS NULL ORDER BY id');
+    // también las eliminadas: sus pedidos, pagos y reclamos siguen (sin su nombre)
+    const orgs = await rows(c, 'SELECT * FROM organizations ORDER BY id');
     const members = groupBy(await rows(c, 'SELECT om.*, u.uuid, ab.uuid AS added_by_uuid FROM organization_members om JOIN users u ON u.id = om.user_id LEFT JOIN users ab ON ab.id = om.added_by ORDER BY om.organization_id, om.position'), 'organization_id');
     const locales = groupBy(await rows(c, 'SELECT * FROM addresses WHERE uuid IS NOT NULL ORDER BY organization_id, position'), 'organization_id');
     const buyers = indexBy(await rows(c, 'SELECT * FROM buyer_details'), 'organization_id');
@@ -422,7 +454,8 @@ export const orgsUnit: Unit = {
       const o: Org = strip({
         id: r.uuid, type: r.kind, name: r.trade_name, legalName: ostr(r.legal_name), ruc: ostr(r.ruc), dni: ostr(r.dni), district: r.ubigeo, province: r.province_code,
         address: ad ? ad.address_line : undefined, receiver: ostr(bd?.receiver_name), businessType: ostr(bd?.business_type) as Org['businessType'],
-        level: r.verification_level, status: r.status, suspendedReason: ostr(r.suspended_reason), createdAt: tm(r.created_at), taxRegime: ostr(tp?.tax_regime) as Org['taxRegime'],
+        level: r.verification_level, status: r.status, suspendedReason: ostr(r.suspended_reason), deletedAt: tms(r.deleted_at), deletedReason: ostr(r.deleted_reason),
+        createdAt: tm(r.created_at), taxRegime: ostr(tp?.tax_regime) as Org['taxRegime'],
         payout: (payouts.get(r.id) ?? []).map(a => strip({
           id: a.uuid, kind: a.method, number: decrypt(a.account_enc), holder: a.holder_name, relation: a.holder_relation,
           authorization: ostr(a.authorization_text), verified: a.status === 'VERIFICADA',

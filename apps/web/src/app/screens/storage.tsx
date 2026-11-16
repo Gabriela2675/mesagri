@@ -19,8 +19,8 @@ import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { RoleHead, RucLookup, regGet, regSet, districtOptions } from './onboarding';
 import { IdentityForm, identityProblem, confirmIdentity, idPayload, emptyId, type IdDraft } from './identity';
-import { StatementView, MESAGRI_YAPE } from './farmer2';
-import { PrefsSheet, NameSheet, PermsSheet } from './common';
+import { StatementView } from './farmer2';
+import { textSizeLabel, PrefsSheet, NameSheet, PermsSheet } from './common';
 import { canAskPermissions } from '../platform';
 import { accruedRent } from '@mesagri/shared/engine/billing';
 import type { Org, Lot, Booking, ReleaseOrder, Evidence, World } from '@mesagri/shared/types';
@@ -878,7 +878,7 @@ function WhProfile() {
         </div></Card>
         <Btn full kind="sec" onClick={() => A.sheet(<EditCapacity />)}>Editar capacidad y tarifas</Btn>
         <Card><div className="list">
-          {[['message-circle', 'Mensajes', () => A.go('A-18')], ['bell', 'Avisos', () => A.go('A-29')], ['shield-check', 'Mi verificación', () => A.go('C-05')], ['user', 'Tu nombre', () => A.sheet(<NameSheet />)], ...(canAskPermissions() ? [['smartphone', 'Permisos de la app', () => A.sheet(<PermsSheet />)]] : []), ['globe', 'Idioma y lectura', () => A.sheet(<PrefsSheet />)], ['circle-question-mark', 'Ayuda y reclamos', () => A.go('A-19')], ['log-out', 'Cerrar sesión', () => A.logout()]].map(([i, l, f]) => <button key={l as string} className="li" onClick={f as () => void}><ICirc n={i as string} /><b className="bodym grow">{l as string}</b><Icon n="chevron-right" s="1.1em" /></button>)}
+          {[['message-circle', 'Mensajes', () => A.go('A-18')], ['bell', 'Avisos', () => A.go('A-29')], ['shield-check', 'Mi verificación', () => A.go('C-05')], ['user', 'Tu nombre', () => A.sheet(<NameSheet />)], ...(canAskPermissions() ? [['smartphone', 'Permisos de la app', () => A.sheet(<PermsSheet />)]] : []), ['globe', `Idioma y letra (${textSizeLabel(A.me!.prefs.textScale)})`, () => A.sheet(<PrefsSheet />)], ['circle-question-mark', 'Ayuda y reclamos', () => A.go('A-19')], ['log-out', 'Cerrar sesión', () => A.logout()]].map(([i, l, f]) => <button key={l as string} className="li" onClick={f as () => void}><ICirc n={i as string} /><b className="bodym grow">{l as string}</b><Icon n="chevron-right" s="1.1em" /></button>)}
         </div></Card>
       </div>
     </Screen>
@@ -971,4 +971,4 @@ reg('C-13S', StatementView);
 reg('C-14', WhProfile, { nav: true, tab: 'C-14' });
 reg('C-15', WhPickups, { nav: true, tab: 'C-07' });
 
-void Av; void Tile; void Photo; void Steps; void overdueStatement; void expiredDocs; void ago; void DOW_CHIP; void lima; void limaTime; void PAY_LABEL; void itemsShort; void MESAGRI_YAPE; void WAREHOUSE_LEVEL_NAME; void districtName; void Sel;
+void Av; void Tile; void Photo; void Steps; void overdueStatement; void expiredDocs; void ago; void DOW_CHIP; void lima; void limaTime; void PAY_LABEL; void itemsShort; void WAREHOUSE_LEVEL_NAME; void districtName; void Sel;

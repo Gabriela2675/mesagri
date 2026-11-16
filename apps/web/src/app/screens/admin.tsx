@@ -25,6 +25,8 @@ import { IdentityReview } from './idreview';
 import { appUrl } from '../routes';
 import { docPdf } from '../pdf';
 import type { World, Org, User, VerifCase, SubOrder, Dispute, Listing, AdminRole, Complaint } from '@mesagri/shared/types';
+import { AccountTools, OrderDetail, ProofTable, payState, listingPill, listingTitle } from './admin3';
+import { paymentStrikes, ticketNeedsReply } from '@mesagri/shared/queries';
 
 /* ================= Marco del panel ================= */
 type Role = AdminRole;
@@ -43,7 +45,8 @@ export const NAV: NavItem[] = [
   { s: 'W-05', l: 'Usuarios', i: 'users', roles: ['GENERAL', 'VERIFIER', 'SUPPORT'] },
   { s: 'W-06', l: 'Publicaciones', i: 'package', roles: ['GENERAL', 'SUPPORT'], badge: w => modQueue(w).length },
   { s: 'W-07', l: 'Pedidos y disputas', i: 'shopping-bag', roles: ['GENERAL', 'SUPPORT'], badge: w => Object.values(w.disputes).filter(d => d.status !== 'RESOLVED').length },
-  { s: 'W-08', l: 'Reclamos', i: 'file-text', roles: ['GENERAL', 'SUPPORT'], badge: w => Object.values(w.complaints).filter(c => c.status === 'OPEN').length + Object.values(w.tickets).filter(t => t.status === 'OPEN' && !t.replies.length).length },
+  { s: 'W-21', l: 'Mensajes de ayuda', i: 'message-circle', roles: ['GENERAL', 'SUPPORT'], badge: w => Object.values(w.tickets).filter(t => ticketNeedsReply(w, t)).length },
+  { s: 'W-08', l: 'Reclamos', i: 'file-text', roles: ['GENERAL', 'SUPPORT'], badge: w => Object.values(w.complaints).filter(c => c.status === 'OPEN').length },
   { s: 'W-09', l: 'Catálogo', i: 'search', roles: ['GENERAL'] },
   { s: 'W-14', l: 'Cobros', i: 'banknote', roles: ['GENERAL'], badge: w => Object.values(w.statements).filter(s => s.status === 'PAYMENT_REGISTERED' || s.claim?.status === 'OPEN').length + Object.values(w.invoices).filter(i => i.status === 'PAID').length },
   { s: 'W-10', l: 'Configuración', i: 'percent', roles: ['GENERAL'], group: ['W-10', 'W-18'], badge: w => Object.values(w.proposals).filter(p => p.status === 'PENDING').length },
@@ -310,7 +313,10 @@ function Dashboard() {
     ['warehouse', 'Almacenes', pendPill(casesOf(w, ['WAREHOUSE']), A.now, Object.values(w.orgs).filter(o => o.warehouse?.visitScheduled && startOfDay(o.warehouse.visitScheduled) === startOfDay(A.now)).length ? 'visita hoy' : undefined), 'W-13', ['GENERAL', 'VERIFIER']],
     ['truck', 'Transportistas', pendPill(casesOf(w, ['CARRIER']), A.now), 'W-16', ['GENERAL', 'VERIFIER']],
     ['shopping-bag', 'Disputas abiertas', countPill(Object.values(w.disputes).filter(d => d.status !== 'RESOLVED').length), 'W-07', ['GENERAL', 'SUPPORT']],
+    ['message-circle', 'Mensajes de ayuda por responder', countPill(Object.values(w.tickets).filter(t => ticketNeedsReply(w, t)).length), 'W-21', ['GENERAL', 'SUPPORT']],
     ['file-text', 'Reclamos', complaintPill(w, A.now), 'W-08', ['GENERAL', 'SUPPORT']],
+    ['receipt', 'Pagos a Mesagri por conciliar', countPill(Object.values(w.statements).filter(s => s.status === 'PAYMENT_REGISTERED').length + Object.values(w.invoices).filter(i => i.status === 'PAID').length), 'W-14', ['GENERAL']],
+    ['banknote', 'Pagos de pedidos sin confirmar (24 h)', countPill(Object.values(w.subOrders).filter(s => s.payment.status === 'UPLOADED' && A.now - (s.payment.uploadedAt ?? A.now) > 24 * HOUR).length), 'W-07', ['GENERAL', 'SUPPORT']],
     ['banknote', 'Cuentas vencidas', countPill(Object.values(w.statements).filter(s => s.status === 'OVERDUE').length), 'W-14', ['GENERAL']],
     ['triangle-alert', 'Publicaciones marcadas', countPill(modQueue(w).length), 'W-06', ['GENERAL', 'SUPPORT']],
     ['truck', 'Reclamos de envíos', countPill(Object.values(w.shipments).filter(s => s.claim && s.claim.status !== 'RESOLVED').length), 'W-17', ['GENERAL', 'SUPPORT']],
@@ -560,19 +566,22 @@ function lastSeenMap(A: AppCtx): Map<string, number> {
 function Users() {
   const A = useApp();
   const w = A.w;
-  const [tab, setTab] = useState<'ALL' | 'FARMER' | 'BUYER' | 'WAREHOUSE' | 'CARRIER' | 'BLOCKED'>('ALL');
+  const [tab, setTab] = useState<'ALL' | 'FARMER' | 'BUYER' | 'WAREHOUSE' | 'CARRIER' | 'BLOCKED' | 'DELETED'>(A.top.p?.id && A.w.orgs[A.top.p.id]?.status === 'DELETED' ? 'DELETED' : 'ALL');
   const [q, setQ] = useState('');
   const [sel, setSel] = useState<string>(A.top.p?.id ?? 'org-geranios');
   const seen = useMemo(() => lastSeenMap(A), [A.store.version]);
   const orgs = Object.values(w.orgs).filter(o => o.type !== 'MESAGRI');
-  const blocked = (o: Org) => o.status === 'SUSPENDED' || Object.values(w.statements).some(s => s.orgId === o.id && s.status === 'OVERDUE') || o.subscription?.status === 'INACTIVE';
-  const list = orgs.filter(o => (tab === 'ALL' || (tab === 'BLOCKED' ? blocked(o) : o.type === tab)) && (!q || [o.name, o.legalName ?? '', o.ruc ?? '', ...Object.values(w.users).filter(u => u.orgId === o.id).map(u => `${u.name} ${u.dni ?? ''} ${u.phone}`)].some(s => norm(s).includes(norm(q))))).sort((a, b) => (seen.get(b.id) ?? 0) - (seen.get(a.id) ?? 0));
+  const blocked = (o: Org) => o.status === 'SUSPENDED' || paymentStrikes(w, o.id) > 0 || Object.values(w.statements).some(s => s.orgId === o.id && s.status === 'OVERDUE') || o.subscription?.status === 'INACTIVE';
+  const live = orgs.filter(o => o.status !== 'DELETED');
+  const list = orgs.filter(o => (tab === 'DELETED' ? o.status === 'DELETED' : o.status !== 'DELETED' && (tab === 'ALL' || (tab === 'BLOCKED' ? blocked(o) : o.type === tab))) && (!q || [o.name, o.legalName ?? '', o.ruc ?? '', ...Object.values(w.users).filter(u => u.orgId === o.id).map(u => `${u.name} ${u.dni ?? ''} ${u.phone}`)].some(s => norm(s).includes(norm(q))))).sort((a, b) => (seen.get(b.id) ?? 0) - (seen.get(a.id) ?? 0));
   const o = w.orgs[sel];
   const TYPE: Record<string, string> = { FARMER: 'Agricultor', BUYER: 'MYPE', WAREHOUSE: 'Almacén', CARRIER: 'Transportista' };
   const level = (x: Org) => x.carrier ? x.carrier.level : x.warehouse ? x.warehouse.level : String(x.level);
   const plan = (x: Org) => x.subscription ? `${A.w.settings.plans[x.subscription.plan].name} · ${money(A.w.settings.plans[x.subscription.plan].price).replace(',00', '')}` : x.type === 'FARMER' ? `Comisión ${pct(w.settings.commission.rate)}` : x.type === 'WAREHOUSE' ? `${pct(w.settings.storage.commission)} del alquiler` : `${pct(w.settings.carrier.commission)} del flete`;
   const state = (x: Org): [string, 'warn' | 'danger' | ''] => {
+    if (x.status === 'DELETED') return ['Eliminada', 'danger'];
     if (x.status === 'SUSPENDED') return ['Suspendida', 'danger'];
+    if (paymentStrikes(w, x.id) > 0) return [`${paymentStrikes(w, x.id)} ${paymentStrikes(w, x.id) === 1 ? 'pago no llegó' : 'pagos no llegaron'}`, 'danger'];
     const od = Object.values(w.statements).find(s => s.orgId === x.id && s.status === 'OVERDUE');
     if (od) return [`No ${x.type === 'FARMER' ? 'publica' : x.type === 'CARRIER' ? 'recibe ofertas' : 'recibe reservas'}: deuda ${money(od.total)}`, 'danger'];
     if (x.subscription?.status === 'GRACE') return ['Pago pendiente', 'warn'];
@@ -581,10 +590,10 @@ function Users() {
     return ['Activa', ''];
   };
   return (
-    <WebFrame title="Usuarios y organizaciones" sub={`${orgs.length} organizaciones · ${Object.values(w.users).filter(u => u.role !== 'ADMIN').length} usuarios`} right={<WSearch value={q} onInput={setQ} placeholder="Buscar nombre, DNI, RUC o celular" />}>
+    <WebFrame title="Usuarios y organizaciones" sub={`${live.length} cuentas · ${Object.values(w.users).filter(u => u.role !== 'ADMIN' && u.status !== 'DELETED').length} personas · corrige datos, suspende o elimina desde la ficha`} right={<WSearch value={q} onInput={setQ} placeholder="Buscar nombre, DNI, RUC o celular" />}>
       <div className="split">
         <div>
-          <Tabs value={tab} onChange={setTab} options={[['ALL', 'Todas'], ['FARMER', 'Agricultores'], ['BUYER', 'MYPE'], ['WAREHOUSE', 'Almacenes'], ['CARRIER', 'Transportistas'], ['BLOCKED', `Bloqueadas (${orgs.filter(blocked).length})`]]} />
+          <Tabs value={tab} onChange={setTab} options={[['ALL', 'Todas'], ['FARMER', 'Agricultores'], ['BUYER', 'MYPE'], ['WAREHOUSE', 'Almacenes'], ['CARRIER', 'Transportistas'], ['BLOCKED', `Con alertas (${live.filter(blocked).length})`], ['DELETED', `Eliminadas (${orgs.length - live.length})`]]} />
           <div className="wcard"><table className="wtable resp">
             <thead><tr><th>Organización</th><th>Tipo</th><th>Nivel</th><th>Plan o cargo</th><th>Estado</th><th>Último uso</th></tr></thead>
             <tbody>{list.map(x => { const [st, tone] = state(x); return (
@@ -592,9 +601,10 @@ function Users() {
                 <td data-l="Organización"><b>{x.legalName && x.type !== 'FARMER' ? x.legalName : x.name}</b></td><td data-l="Tipo">{TYPE[x.type]}</td><td data-l="Nivel">{level(x)}</td><td data-l="Plan o cargo">{plan(x)}</td><td data-l="Estado"><Pill tone={tone}>{st}</Pill></td><td data-l="Último uso">{seen.get(x.id) ? `${relDay(seen.get(x.id)!, A.now)} ${hhmm(seen.get(x.id)!)}` : '—'}</td>
               </Row>
             ); })}</tbody>
-          </table></div>
+          </table>
+          {list.length === 0 && <p className="wnote">{tab === 'DELETED' ? 'Ninguna cuenta eliminada.' : 'Sin cuentas con ese filtro.'}</p>}</div>
         </div>
-        {o && <OrgCard o={o} />}
+        {o && <OrgCard o={o} key={o.id} />}
       </div>
     </WebFrame>
   );
@@ -624,11 +634,10 @@ function OrgCard({ o }: { o: Org }) {
       <h2>Ficha</h2>
       <div className="row" style={{ gap: "12px", marginBottom: "10px" }}><span className="av" style={{ background: o.color, width: '52px', height: '52px', fontSize: '17px' }}>{o.initials}</span><div><b style={{ fontSize: "18px" }}>{o.legalName && o.type !== 'FARMER' ? o.legalName : o.name}</b><div className="wnote" style={{ margin: "2px 0 0" }}>{o.ruc ? `RUC ${maskRuc(o.ruc)}${pad ? ` · ${pad.estado.toLowerCase()} y ${pad.condicion.toLowerCase()}` : ''}` : 'Sin RUC'} · {districtName(o.district)}</div></div></div>
       <table className="wtable"><tbody>{rows.map(([a, b]) => <tr key={a}><td>{a}</td><td className="r"><b>{b}</b></td></tr>)}</tbody></table>
-      <div className="sect" style={{ marginTop: "14px" }}>Usuarios</div>
-      <div className="stack tight">{members.map(u => <div key={u.id} style={{ fontSize: "14.5px", fontWeight: "700" }}>{u.name}{u.dni ? ` · DNI ${maskDni(u.dni)}` : ''}<span className="cap"> · {u.phone.slice(0, 3)} ••• {u.phone.slice(-3)}</span></div>)}</div>
       {o.status === 'SUSPENDED' && <p className="wnote" style={{ color: "var(--danger)", fontWeight: "700" }}>Suspendida: {o.suspendedReason}</p>}
+      <AccountTools o={o} />
       {asking && <div className="stack tight" style={{ marginTop: "10px" }}><Inp area value={why} onInput={setWhy} placeholder="Motivo de la suspensión (el usuario lo lee)" label="Motivo" /><div className="row g8"><Btn sm kind="danger" onClick={() => { if (A.act('ORG_SUSPEND', { orgId: o.id, reason: why }, { ok: 'Cuenta suspendida. Sus pedidos en curso continúan.' }).ok) { setAsking(false); setWhy(''); } }}>Confirmar suspensión</Btn><Btn sm kind="sec" onClick={() => setAsking(false)}>Cancelar</Btn></div></div>}
-      <div className="row g8 wrap" style={{ marginTop: "14px" }}>
+      {o.status !== 'DELETED' && <div className="row g8 wrap" style={{ marginTop: "14px" }}>
         {role === 'GENERAL' && <Btn sm kind="sec" onClick={() => A.go('W-12', { q: o.name })}>Ver auditoría</Btn>}
         {role !== 'VERIFIER' && role !== 'ANALYST' && <Btn sm kind="sec" onClick={async () => {
           if (!await A.confirm({ title: `¿Cerrar las sesiones de ${o.name}?`, text: 'Tendrán que volver a entrar con su celular y el código. Queda en la auditoría.', ok: 'Cerrar sesiones' })) return;
@@ -639,7 +648,8 @@ function OrgCard({ o }: { o: Org }) {
           } catch (e: any) { A.toast(e?.message ?? 'No pudimos restablecer el acceso.', 'err'); }
         }}>Restablecer acceso</Btn>}
         {(role === 'GENERAL' || role === 'SUPPORT') && (o.status === 'SUSPENDED' ? <Btn sm kind="dark" onClick={() => A.act('ORG_REACTIVATE', { orgId: o.id }, { ok: 'Cuenta reactivada.' })}>Reactivar</Btn> : !asking && <Btn sm kind="secd" onClick={() => setAsking(true)}>Suspender</Btn>)}
-      </div>
+      </div>}
+      {o.status === 'DELETED' && role === 'GENERAL' && <div className="row g8 wrap" style={{ marginTop: "14px" }}><Btn sm kind="sec" onClick={() => A.go('W-12', { q: 'Cuenta eliminada' })}>Ver auditoría</Btn></div>}
     </div>
   );
 }
@@ -657,17 +667,21 @@ function Moderation() {
   const A = useApp();
   const w = A.w;
   const queue = modQueue(w);
-  const [q, setQ] = useState('');
-  const [sel, setSel] = useState<string | undefined>(queue[0]?.id);
+  const [tab, setTab] = useState<'Q' | 'ALL'>(A.top.p?.all ? 'ALL' : 'Q');
+  const [q, setQ] = useState<string>(A.top.p?.q ?? '');
+  const [showGone, setShowGone] = useState(false);
+  const [sel, setSel] = useState<string | undefined>(A.top.p?.id ?? queue[0]?.id);
   const [msg, setMsg] = useState('');
-  const list = queue.filter(l => !q || norm(`${product(l.productId).name} ${orgName(w, l.orgId)}`).includes(norm(q)));
+  const base = tab === 'Q' ? queue : Object.values(w.listings).filter(l => showGone || l.status !== 'REMOVED').sort((a, b) => b.createdAt - a.createdAt);
+  const list = base.filter(l => !q || norm(`${product(l.productId).name} ${l.variety ?? ''} ${orgName(w, l.orgId)}`).includes(norm(q)));
   const l = sel ? w.listings[sel] : undefined;
-  const act = (decision: 'APPROVE' | 'REJECT' | 'PAUSE') => {
+  const act = async (decision: 'APPROVE' | 'REJECT' | 'PAUSE' | 'REMOVE') => {
     if (!l) return;
+    if (decision === 'REMOVE' && !await A.confirm({ title: '¿Eliminar esta publicación?', text: 'Sale del catálogo y se borran sus fotos. No vuelve (el agricultor puede publicar otra). Sus pedidos en curso siguen.', ok: 'Eliminar', danger: true })) return;
     const r = A.act('LISTING_MODERATE', { listingId: l.id, decision, reason: decision === 'APPROVE' ? '' : msg }, { quiet: true });
     if (!r.ok) { A.toast(r.error!.message, 'err'); return; }
-    A.toast(decision === 'APPROVE' ? 'Aprobada: ya se ve en el catálogo.' : decision === 'PAUSE' ? 'Pedimos la corrección al agricultor (con audio).' : 'Publicación ocultada.');
-    setMsg(''); setSel(queue.find(x => x.id !== l.id)?.id);
+    A.toast(decision === 'APPROVE' ? 'Aprobada: ya se ve en el catálogo.' : decision === 'PAUSE' ? 'Pedimos la corrección al agricultor (con audio).' : decision === 'REMOVE' ? 'Publicación eliminada y sus fotos borradas.' : 'Publicación ocultada del catálogo.');
+    setMsg(''); if (tab === 'Q') setSel(queue.find(x => x.id !== l.id)?.id);
   };
   const s = l ? w.orgs[l.orgId] : undefined;
   const sug = l ? suggestedPricePerKg(l.productId) : 0;
@@ -679,35 +693,46 @@ function Moderation() {
     : why === 'high' ? 'Un precio muy alto suele ser un error al dictar (15 en vez de 1,50) o el precio del saco puesto por kilo. Se le pregunta antes de ocultar.'
     : 'Revisa la regla que la marcó, la foto y la chacra. Si algo no cuadra, se le pregunta antes de ocultar.';
   const ask = why === 'low' ? '¿El precio es por kilo o por arroba?' : why === 'high' ? '¿El precio es por kilo o por saco?' : '¿La cantidad y el precio son correctos?';
+  const flagged = l ? queue.some(x => x.id === l.id) : false;
   return (
-    <WebFrame title="Moderación de publicaciones" sub="Solo se revisan las marcadas por reglas o por denuncias; el resto se publica al instante" right={<WSearch value={q} onInput={setQ} placeholder="Buscar publicación" />}>
+    <WebFrame title="Publicaciones" sub="Las marcadas por reglas se revisan aquí; además puedes buscar cualquier publicación para pausarla, ocultarla o eliminarla" right={<WSearch value={q} onInput={setQ} placeholder="Buscar producto o agricultor" />}>
+      <Tabs value={tab} onChange={(t) => { setTab(t); setSel(t === 'Q' ? queue[0]?.id : undefined); }} options={[['Q', `Marcadas (${queue.length})`], ['ALL', 'Todas las publicaciones']]} />
       <div className="split">
         <div className="wcard">
-          <h2>Cola ({list.length})</h2>
-          <table className="wtable resp"><thead><tr><th>Publicación</th><th>Agricultor</th><th>Motivo</th><th>Desde</th></tr></thead>
-            <tbody>{list.map(x => { const [m, tone] = reasonOf(w, x); return <Row key={x.id} sel={x.id === sel} onOpen={() => setSel(x.id)}><td data-l="Publicación"><b>{product(x.productId).name} · {x.unit === 'kg' ? fkg(x.qtyTotal ?? x.available) : `${numTrim(x.qtyTotal ?? x.available)} ${UNIT_LABEL[x.unit].many}`}</b></td><td data-l="Agricultor">{orgName(w, x.orgId)}</td><td data-l="Motivo"><Pill tone={tone}>{m}</Pill></td><td data-l="Desde">{ago(x.createdAt, A.now).replace('hace ', '')}</td></Row>; })}</tbody></table>
-          {list.length === 0 && <p className="wnote">La cola está vacía.</p>}
+          <div className="row between wrap"><h2 style={{ margin: 0 }}>{tab === 'Q' ? `Cola (${list.length})` : `Publicaciones (${list.length})`}</h2>{tab === 'ALL' && <label className="cap row g8" style={{ alignItems: 'center' }}><input type="checkbox" checked={showGone} onChange={(e: any) => setShowGone(e.currentTarget.checked)} /> Ver también las eliminadas</label>}</div>
+          <table className="wtable resp"><thead><tr><th>Publicación</th><th>Agricultor</th><th>{tab === 'Q' ? 'Motivo' : 'Estado'}</th><th>Desde</th></tr></thead>
+            <tbody>{list.slice(0, 150).map(x => { const [m, tone] = reasonOf(w, x); return <Row key={x.id} sel={x.id === sel} onOpen={() => { setSel(x.id); setMsg(''); }}><td data-l="Publicación"><b>{product(x.productId).name}{x.variety ? ` ${x.variety}` : ''} · {x.unit === 'kg' ? fkg(x.qtyTotal ?? x.available) : `${numTrim(x.qtyTotal ?? x.available)} ${UNIT_LABEL[x.unit].many}`}</b><div className="cap">{money(x.price)} por {x.unit === 'kg' ? 'kg' : UNIT_LABEL[x.unit].one}</div></td><td data-l="Agricultor">{orgName(w, x.orgId)}</td><td data-l={tab === 'Q' ? 'Motivo' : 'Estado'}>{tab === 'Q' ? <Pill tone={tone}>{m}</Pill> : listingPill(x)}</td><td data-l="Desde">{ago(x.createdAt, A.now).replace('hace ', '')}</td></Row>; })}</tbody></table>
+          {list.length === 0 && <p className="wnote">{tab === 'Q' ? 'La cola está vacía.' : 'No hay publicaciones con esa búsqueda.'}</p>}
+          {list.length > 150 && <p className="wnote">Mostramos 150: busca por producto o agricultor.</p>}
         </div>
         {l && s && (
           <div className="stack">
             <div className="wcard">
-              <h2>Detalle</h2>
-              <div className="row" style={{ gap: "14px" }}><span className="tile lg" style={{ background: product(l.productId).color, width: '76px', height: '76px', fontSize: '34px' }}>{product(l.productId).letter}</span><div><b style={{ fontSize: "19px" }}>{product(l.productId).name} · {l.unit === 'kg' ? fkg(l.qtyTotal ?? l.available) : `${numTrim(l.qtyTotal ?? l.available)} ${UNIT_LABEL[l.unit].many}`}</b><div className="price" style={{ fontSize: "18px" }}>{money(pricePerKg(l))} por kg</div><div className="wnote" style={{ margin: "2px 0 0" }}>{s.name} · {districtName(s.district)} · nivel {s.level}</div></div></div>
+              <div className="row between"><h2 style={{ margin: 0 }}>Detalle</h2>{listingPill(l)}</div>
+              <div className="row" style={{ gap: "14px", marginTop: '8px' }}><span className="tile lg" style={{ background: product(l.productId).color, width: '76px', height: '76px', fontSize: '34px' }}>{product(l.productId).letter}</span><div><b style={{ fontSize: "19px" }}>{listingTitle(l)}</b><div className="price" style={{ fontSize: "18px" }}>{money(pricePerKg(l))} por kg</div><div className="wnote" style={{ margin: "2px 0 0" }}><button className="linkbtn" style={{ padding: 0, minHeight: 0 }} onClick={() => A.go('W-05', { id: s.id })}>{s.name}</button> · {districtName(s.district)} · nivel {s.level}</div></div></div>
+              {l.photoIds.length > 0 ? <div className="wphotos" style={{ marginTop: '10px' }}>{l.photoIds.map((p, i) => <figure key={p}><div className="photo"><Photo id={p} /></div><figcaption>{i === 0 ? 'Portada' : `Foto ${i + 1}`}{l.harvestSeal && i === 0 ? ' · cosechado hoy' : ''}</figcaption></figure>)}</div> : <p className="wnote">Sin fotos.</p>}
               <table className="wtable" style={{ marginTop: "10px" }}><tbody>
                 <tr><td>Precio sugerido hoy</td><td className="r"><b>{money(sug)} por kg</b></td></tr>
                 <tr><td>Diferencia</td><td className="r"><b>{diff >= 0 ? '+' : '−'}{pct(Math.abs(diff))}</b></td></tr>
-                <tr><td>Foto</td><td className="r"><b>{l.photoIds.length ? `Tomada en la app · ${dateDM(l.createdAt)}` : 'Sin foto'}</b></td></tr>
-                <tr><td>Publicaciones previas</td><td className="r"><b>{prev} · sin denuncias</b></td></tr>
-                {l.reviewReason && <tr><td>Regla</td><td className="r"><b>{l.reviewReason}</b></td></tr>}
+                <tr><td>Disponible · reservado · vendido</td><td className="r"><b>{numTrim(l.available)} · {numTrim(l.reserved)} · {numTrim(l.sold)} {l.unit === 'kg' ? 'kg' : UNIT_LABEL[l.unit].many}</b></td></tr>
+                <tr><td>Publicada</td><td className="r"><b>{dateShort(l.createdAt)} · vence {Number.isFinite(l.expiresAt) ? dateShort(l.expiresAt) : '—'}</b></td></tr>
+                <tr><td>Otras publicaciones suyas</td><td className="r"><b>{prev}</b></td></tr>
+                {l.reviewReason && <tr><td>{l.status === 'IN_REVIEW' ? 'Regla' : 'Motivo'}</td><td className="r"><b>{l.reviewReason}</b></td></tr>}
               </tbody></table>
-              <p className="wnote">{note}</p>
+              {flagged && <p className="wnote">{note}</p>}
             </div>
-            <div className="wcard">
+            {l.status !== 'REMOVED' ? <div className="wcard">
               <h2>Acción</h2>
-              <Inp area value={msg} onInput={setMsg} placeholder={ask} label="Mensaje al agricultor" />
-              <div className="row g8 wrap" style={{ marginTop: "10px" }}><Btn sm kind="dark" onClick={() => act('APPROVE')}>Aprobar</Btn><Btn sm kind="sec" onClick={() => { if (!msg.trim()) setMsg(`${ask} Corrígelo y vuelve a publicar.`); else act('PAUSE'); }}>Pedir corrección</Btn><Btn sm kind="secd" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } act('REJECT'); }}>Ocultar</Btn></div>
-              <p className="wnote">El mensaje le llega con audio. Ocultar o pausar exige un motivo (queda en auditoría).</p>
-            </div>
+              <Inp area value={msg} onInput={setMsg} placeholder={flagged ? ask : 'Motivo (el agricultor lo lee): foto que no es del producto, precio engañoso, producto prohibido…'} label="Mensaje al agricultor" />
+              <div className="row g8 wrap" style={{ marginTop: "10px" }}>
+                {l.status !== 'ACTIVE' && l.status !== 'SOLD_OUT' && <Btn sm kind="dark" onClick={() => act('APPROVE')}>{l.status === 'IN_REVIEW' ? 'Aprobar' : 'Volver a mostrar'}</Btn>}
+                {flagged && l.status === 'ACTIVE' && <Btn sm kind="dark" onClick={() => act('APPROVE')}>Aprobar</Btn>}
+                {l.status !== 'PAUSED' && <Btn sm kind="sec" onClick={() => { if (!msg.trim()) setMsg(flagged ? `${ask} Corrígelo y vuelve a publicar.` : ''); else act('PAUSE'); }}>Pausar y pedir corrección</Btn>}
+                {l.status !== 'REJECTED' && <Btn sm kind="secd" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } act('REJECT'); }}>Ocultar</Btn>}
+                <Btn sm kind="danger" icon="trash-2" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } void act('REMOVE'); }}>Eliminar</Btn>
+              </div>
+              <p className="wnote">Pausar: el agricultor la corrige y la reactiva. Ocultar: deja de verse y no la puede reactivar. Eliminar: además se borran sus fotos. En todos los casos sus pedidos en curso siguen. El mensaje le llega con audio y queda en auditoría.</p>
+            </div> : <div className="wcard"><p className="wnote" style={{ margin: 0 }}>Publicación eliminada{l.reviewReason ? `: ${l.reviewReason}` : ''}. No vuelve al catálogo.</p></div>}
           </div>
         )}
       </div>
@@ -721,28 +746,40 @@ function Disputes() {
   const w = A.w;
   const ds = Object.values(w.disputes).sort((a, b) => (a.status === 'RESOLVED' ? 1 : 0) - (b.status === 'RESOLVED' ? 1 : 0) || a.openedAt - b.openedAt);
   const expired = Object.values(w.subOrders).filter(s => s.status === 'EXPIRED').sort((a, b) => b.confirmBy - a.confirmBy);
-  const [tab, setTab] = useState<'D' | 'E' | 'T'>('D');
+  const unpaid = Object.values(w.subOrders).filter(s => s.payment.status === 'UPLOADED' || s.payment.status === 'NOT_RECEIVED').sort((a, b) => (a.payment.uploadedAt ?? 0) - (b.payment.uploadedAt ?? 0));
+  const [tab, setTab] = useState<'D' | 'E' | 'P' | 'T'>(A.top.p?.order ? 'T' : 'D');
   const [sel, setSel] = useState<string | undefined>(A.top.p?.id ?? ds.find(d => d.status !== 'RESOLVED')?.id ?? ds[0]?.id);
+  const [order, setOrder] = useState<string | undefined>(A.top.p?.order);
+  const [q, setQ] = useState('');
   const d = sel ? w.disputes[sel] : undefined;
+  const all = Object.values(w.subOrders).filter(s => !q || norm(`${s.code} ${orgName(w, s.buyerOrgId)} ${orgName(w, s.sellerOrgId)} ${s.payment.operation ?? ''}`).includes(norm(q))).sort((a, b) => b.createdAt - a.createdAt).slice(0, 60);
+  const so = order ? w.subOrders[order] : undefined;
+  const withDetail = (list: SubOrder[], title: ReactNode, foot?: ReactNode) => (
+    <div className={so ? 'split' : ''}>
+      <div className="wcard">{title}<OrdersTable list={list} sel={order} onOpen={setOrder} />{list.length === 0 && <p className="wnote">No hay pedidos aquí.</p>}{foot}</div>
+      {so && <OrderDetail s={so} key={so.id} onClose={() => setOrder(undefined)} />}
+    </div>
+  );
   return (
     <WebFrame title={tab === 'D' && d ? `Disputa ${d.code}` : 'Pedidos y disputas'} sub={tab === 'D' && d ? `Pedido ${w.subOrders[d.subOrderId]?.code} · ${orgName(w, w.subOrders[d.subOrderId]?.buyerOrgId)} compró ${itemsShort(w.subOrders[d.subOrderId]).toLowerCase()} a ${orgName(w, w.subOrders[d.subOrderId]?.sellerOrgId)}` : 'Soporte media; Mesagri no retiene dinero (RN-15)'}
-      right={<Tabs value={tab} onChange={setTab} options={[['D', `Disputas (${ds.filter(x => x.status !== 'RESOLVED').length})`], ['E', `Pedidos vencidos (${expired.length})`], ['T', 'Todos']]} />}>
+      right={<>{tab === 'T' && <WSearch value={q} onInput={setQ} placeholder="Buscar pedido, cuenta u operación" />}<Tabs value={tab} onChange={(t) => { setTab(t); setOrder(undefined); }} options={[['D', `Disputas (${ds.filter(x => x.status !== 'RESOLVED').length})`], ['P', `Pagos sin confirmar (${unpaid.length})`], ['E', `Pedidos vencidos (${expired.length})`], ['T', 'Todos']]} /></>}>
       {tab === 'D' && (
         <>
           {ds.length > 1 && <div className="chips" style={{ marginBottom: "12px" }}>{ds.map(x => <button key={x.id} className={'chip ' + (x.id === sel ? 'forest' : 'line')} onClick={() => setSel(x.id)}>{x.code} · {x.status === 'RESOLVED' ? 'resuelta' : x.status === 'PROPOSED' ? 'propuesta' : 'abierta'}</button>)}</div>}
           {d ? <DisputeView d={d} key={d.id} /> : <div className="wcard"><p className="wnote">No hay disputas.</p></div>}
         </>
       )}
-      {tab === 'E' && <div className="wcard"><h2>Pedidos que vencieron sin respuesta (RN-08)</h2><OrdersTable list={expired} /><p className="wnote">El agricultor tenía {w.settings.orderResponseHours} h para aceptar. Vencido, el comprador no paga nada y se cuenta en la reputación del agricultor.</p></div>}
-      {tab === 'T' && <div className="wcard"><h2>Últimos pedidos</h2><OrdersTable list={Object.values(w.subOrders).sort((a, b) => b.createdAt - a.createdAt).slice(0, 40)} /></div>}
+      {tab === 'P' && withDetail(unpaid, <h2>Constancias que el agricultor todavía no confirma</h2>, <p className="wnote">El dinero va directo a la cuenta del agricultor: solo él puede ver si llegó. Si pasan más de 24 h, escríbele para que revise su Yape o su banco. Si dice que no le llegó, se abre una disputa de pago.</p>)}
+      {tab === 'E' && withDetail(expired, <h2>Pedidos que vencieron sin respuesta (RN-08)</h2>, <p className="wnote">El agricultor tenía {w.settings.orderResponseHours} h para aceptar. Vencido, el comprador no paga nada y se cuenta en la reputación del agricultor.</p>)}
+      {tab === 'T' && withDetail(all, <h2>Últimos pedidos</h2>, <p className="wnote">Toca un pedido para ver su pago (constancia, titular y código) o cancelarlo si todavía no sale.</p>)}
     </WebFrame>
   );
 }
-function OrdersTable({ list }: { list: SubOrder[] }) {
+function OrdersTable({ list, sel, onOpen }: { list: SubOrder[]; sel?: string; onOpen?: (id: string) => void }) {
   const A = useApp();
   return (
-    <table className="wtable resp"><thead><tr><th>Pedido</th><th>Comprador</th><th>Agricultor</th><th>Producto</th><th>Entrega</th><th className="r">Total</th><th>Estado</th></tr></thead>
-      <tbody>{list.map(s => { const st = statusInfo(s, 'buyer'); return <tr key={s.id}><td data-l="Pedido"><b>{s.code}</b><div className="cap">{dateShort(s.createdAt)} {hhmm(s.createdAt)}</div></td><td data-l="Comprador">{orgName(A.w, s.buyerOrgId)}</td><td data-l="Agricultor">{orgName(A.w, s.sellerOrgId)}</td><td data-l="Producto">{itemsShort(s)}</td><td data-l="Entrega">{deliveryText(s)}</td><td data-l="Total" className="r tnum">{money(s.total)}</td><td data-l="Estado"><Pill tone={st.tone === 'danger' ? 'danger' : st.tone === 'terra' || st.tone === 'warn' ? 'warn' : ''}>{s.status === 'DELIVERED' ? 'Por conformidad' : st.label}</Pill></td></tr>; })}</tbody></table>
+    <table className="wtable resp"><thead><tr><th>Pedido</th><th>Comprador</th><th>Agricultor</th><th>Producto</th><th className="r">Total</th><th>Estado</th><th>Pago</th></tr></thead>
+      <tbody>{list.map(s => { const st = statusInfo(s, 'buyer'); const [ps, ptone] = payState(s, A.now); return <Row key={s.id} sel={s.id === sel} onOpen={onOpen ? () => onOpen(s.id) : undefined}><td data-l="Pedido"><b>{s.code}</b><div className="cap">{dateShort(s.createdAt)} {hhmm(s.createdAt)}</div></td><td data-l="Comprador">{orgName(A.w, s.buyerOrgId)}</td><td data-l="Agricultor">{orgName(A.w, s.sellerOrgId)}</td><td data-l="Producto">{itemsShort(s)}<div className="cap">{deliveryText(s)}</div></td><td data-l="Total" className="r tnum">{money(s.total)}</td><td data-l="Estado"><Pill tone={st.tone === 'danger' ? 'danger' : st.tone === 'terra' || st.tone === 'warn' ? 'warn' : ''}>{s.status === 'DELIVERED' ? 'Por conformidad' : st.label}</Pill></td><td data-l="Pago"><Pill tone={ptone}>{ps}</Pill></td></Row>; })}</tbody></table>
   );
 }
 function DisputeView({ d }: { d: Dispute }) {
@@ -755,7 +792,7 @@ function DisputeView({ d }: { d: Dispute }) {
   const [note, setNote] = useState(d.proposal?.note ?? (diffAmt ? `Faltaron ${lines.filter(x => x.missing).map(x => `${numTrim(x.missing)} ${x.i.unit === 'kg' ? 'kg' : UNIT_LABEL[x.i.unit].many}`).join(', ')}: ${orgName(w, s.sellerOrgId).split(' ')[0]} devuelve ${money(diffAmt)} por Yape.` : ''));
   const ref = Number(refund.replace(',', '.')) || 0;
   const msgs = (w.messages[s.id] ?? []).slice(-4);
-  const photos = [s.deliveryPhotoId, ...(s.receiptPhotoIds ?? []), ...d.photoIds].filter(Boolean) as string[];
+  const photos = (d.kind === 'PAGO_NO_RECIBIDO' ? [s.payment.photoId, ...d.photoIds] : [s.deliveryPhotoId, ...(s.receiptPhotoIds ?? []), ...d.photoIds]).filter(Boolean) as string[];
   const sale = r2(s.subtotal - ref);
   const resolve = (outcome: 'FAVOR_COMPRADOR' | 'FAVOR_AGRICULTOR' | 'ACUERDO', amount: number) => {
     const r = A.act('DISPUTE_RESOLVE', { disputeId: d.id, outcome, refund: amount, note: note || (outcome === 'FAVOR_AGRICULTOR' ? 'Las pruebas muestran que se entregó lo pedido.' : 'Acuerdo entre las partes.') }, { quiet: true });
@@ -776,7 +813,7 @@ function DisputeView({ d }: { d: Dispute }) {
           <div className="tl">{tl.map((x, i) => <div key={i} className={'st ' + (x.done ? 'done' : (x as any).cur ? 'cur' : 'pend')}><span className="dotc">{x.done ? <Icon n="check" s="1.1em" w={3} /> : (x as any).cur ? <Icon n="clock" s="1.1em" w={2.5} /> : null}</span><div><b>{x.t}</b><span>{x.s}</span></div></div>)}</div>
         </div>
         <div className="wcard"><h2>Evidencias</h2>
-          {photos.length ? <div className="wphotos">{photos.map((p, i) => <figure key={p}><div className="photo"><Photo id={p} /></div><figcaption>{p === s.deliveryPhotoId ? 'Entrega · foto del agricultor' : i <= (s.receiptPhotoIds?.length ?? 0) ? 'Recepción · foto del comprador' : 'Foto del reporte'}</figcaption></figure>)}</div>
+          {photos.length ? <div className="wphotos">{photos.map((p, i) => <figure key={p}><div className="photo"><Photo id={p} /></div><figcaption>{p === s.payment.photoId ? 'Constancia que subió el comprador' : p === s.deliveryPhotoId ? 'Entrega · foto del agricultor' : i <= (s.receiptPhotoIds?.length ?? 0) ? 'Recepción · foto del comprador' : 'Foto del reporte'}</figcaption></figure>)}</div>
             : <div className="wphotos">{['Entrega · foto del agricultor', 'Recepción · balanza del comprador', 'Sacos al llegar'].map(l => <figure key={l}><div className="photo"><Icon n="camera" s="32" w={1.6} /></div><figcaption>{l} · sin foto en la demo</figcaption></figure>)}</div>}
           {lines.some(x => x.missing) && <p className="wnote">Pedido: {lines.map(x => `${numTrim(x.i.qty)} ${x.i.unit}`).join(', ')} · aceptado por el comprador: {lines.map(x => `${numTrim(x.i.acceptedQty ?? x.i.qty)} ${x.i.unit}`).join(', ')}.</p>}
         </div>
@@ -787,7 +824,8 @@ function DisputeView({ d }: { d: Dispute }) {
         </div>
         <div className="wcard"><h2>{d.status === 'RESOLVED' ? 'Resolución' : 'Resolución sugerida'}</h2>
           {d.status === 'RESOLVED' ? <table className="wtable"><tbody><tr><td>Resultado</td><td className="r"><b>{({ FAVOR_COMPRADOR: 'A favor del comprador', FAVOR_AGRICULTOR: 'A favor del agricultor', ACUERDO: 'Acuerdo' } as any)[d.resolution!.outcome]}</b></td></tr><tr><td>Devolución</td><td className="r"><b>{money(d.resolution!.refund)}</b></td></tr><tr><td>Nota</td><td className="r">{d.resolution!.note}</td></tr></tbody></table> : payDispute ? <>
-            <p className="bodym">Revisa la constancia del comprador (op. {s.payment.operation ?? '—'}, {s.payment.amount ? money(s.payment.amount) : ''}) contra el movimiento que muestre el agricultor.</p>
+            <p className="bodym">Pide al agricultor una captura de los movimientos de su {PAY_LABEL[s.payment.method]} de ese día y al comprador el correo o mensaje de confirmación de su banco. Compara monto, hora, titular{s.payment.method === 'YAPE' ? ' y el código de seguridad de 3 dígitos (debe ser el mismo en los dos)' : ''}.</p>
+            {s.payment.operation && <ProofTable pay={s.payment} amount={s.payment.amount ?? s.total} />}
             <Inp area value={note} onInput={setNote} placeholder="Qué se verificó" label="Nota" />
             <div className="row g8 wrap" style={{ marginTop: "10px" }}><Btn sm kind="dark" onClick={() => resolve('FAVOR_COMPRADOR', 0)}>El pago sí llegó</Btn><Btn sm kind="sec" onClick={() => resolve('FAVOR_AGRICULTOR', 0)}>El pago no llegó</Btn></div>
           </> : <>
@@ -819,6 +857,7 @@ function Complaints() {
   const list = Object.values(w.complaints).sort((a, b) => b.at - a.at);
   const tickets = Object.values(w.tickets).sort((a, b) => b.at - a.at);
   const [tab, setTab] = useState<'H' | 'C'>('H');
+  const helpPending = tickets.filter(t => ticketNeedsReply(w, t)).length;
   const [q, setQ] = useState('');
   const [sel, setSel] = useState<string | undefined>(A.top.p?.id ?? list.find(c => c.status === 'OPEN')?.id ?? list[0]?.id);
   const [tsel, setTsel] = useState<string | undefined>(tickets.find(t => t.status === 'OPEN')?.id ?? tickets[0]?.id);
@@ -827,6 +866,7 @@ function Complaints() {
   const exportIndecopi = () => downloadCsv(A, `libro-de-reclamaciones-${periodOf(A.now)}.csv`, [['Hoja', 'Fecha', 'Tipo', 'Consumidor', 'Bien o servicio', 'Monto', 'Detalle', 'Pedido del consumidor', 'Estado', 'Fecha de respuesta', 'Respuesta'], ...list.map(x => [x.number, dateNum(x.at), x.type, orgName(w, x.orgId), x.related, x.amount ? x.amount.toFixed(2) : '', x.detail, x.request, x.status === 'ANSWERED' ? 'Respondido' : 'En trámite', x.answeredAt ? dateNum(x.answeredAt) : '', x.answer ?? ''])]);
   return (
     <WebFrame title={tab === 'H' ? 'Libro de Reclamaciones' : 'Consultas de ayuda'} sub={tab === 'H' ? 'Plazo legal de respuesta: 15 días hábiles' : 'Consultas desde la app (A-19)'} right={<><WSearch value={q} onInput={setQ} placeholder="Buscar hoja o usuario" /><Btn sm kind="sec" icon="download" onClick={exportIndecopi}>Exportar para Indecopi</Btn></>}>
+      <div className="wcard" style={{ marginBottom: '12px' }}><div className="row between wrap"><span className="bodym"><Icon n="message-circle" s="16" /> Los mensajes de ayuda (consultas desde la app) se responden en <b>Mensajes de ayuda</b>{helpPending ? ` · ${helpPending} por responder` : ''}.</span><Btn sm kind={helpPending ? 'dark' : 'sec'} onClick={() => A.reset('W-21')}>Ir a Mensajes de ayuda</Btn></div></div>
       <Tabs value={tab} onChange={setTab} options={[['H', `Hojas (${list.filter(x => x.status === 'OPEN').length} abiertas)`], ['C', `Consultas (${tickets.filter(t => t.status === 'OPEN').length})`]]} />
       {tab === 'H' ? (
         <div className="split">

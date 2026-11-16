@@ -3,14 +3,15 @@
  * conciliación, cambios de configuración con doble aprobación y traducciones.
  * 6.10, RF-ADM-04, RF-ADM-10, RF-ADM-11, RN-35 a RN-41, RN-48, RN-50, RN-63, RN-32.
  */
-import type { World, Statement, StatementItem, Org, SubInvoice } from '../types';
+import type { World, Statement, StatementItem, Org, SubInvoice, BillingPay } from '../types';
 import { on, fail, audit, notify, requireMember, requireAdmin, getOrg, must, nextSeq } from './core';
-import { settingDef } from '../settings';
+import { settingDef, type CollectAccount } from '../settings';
 import { r2, sumBy, PLAN_ORDER } from '../rules';
 import { periodOf, periodStart, nextPeriod, prevPeriod, limaTime, endOfDay, addMonths, DAY, HOUR, periodLabel, lima } from '../time';
 import { money, dateShort, pct } from '../format';
-import { pad } from '../ids';
-import { applyUpgrade } from './orders';
+import { pad, codeFrom } from '../ids';
+import { applyUpgrade, payProof } from './orders';
+import { isPhoneValid } from '../rules';
 import { CRITICAL_KEYS } from '../i18n-keys';
 
 type C = { w: World; t: number; e?: any; n?: number };
@@ -20,31 +21,48 @@ export function invoiceFor(w: World, org: Org, period: string): SubInvoice | und
   return w.invoices[`inv-${org.id}-${period}`];
 }
 
+/** Datos del pago que recibe Mesagri: medio, número de operación y lo que ayuda a encontrarlo en el extracto. */
+function billingPay(c: { e?: any; t: number }, method: string, op: string): BillingPay {
+  const proof = payProof(c.e.p, method);
+  const photo = typeof c.e.p.photoId === 'string' && /^[A-Za-z0-9:_.-]{3,80}$/.test(c.e.p.photoId) ? c.e.p.photoId : undefined;
+  return { method: method as BillingPay['method'], operation: op, at: c.t, ...proof, ...(photo ? { photoId: photo } : {}) };
+}
+
 on('SUB_PAY', (c) => {
   const org = getOrg(c.w, c.a.orgId);
   const s = org.subscription;
   if (!s) fail('FORBIDDEN', 'Tu cuenta no tiene membresía.');
   const method = c.e.p.method;
+  if (!['YAPE', 'PLIN', 'TRANSFER', 'CARD'].includes(method)) fail('PAY_METHOD', 'Elige cómo pagas.');
+  // la tarjeta solo se simula con los datos de ejemplo: sin pasarela de pagos no hay cómo comprobarla
+  if (method === 'CARD' && !c.w.settings.mesagri?.example) fail('NO_CARD', 'El pago con tarjeta todavía no está disponible: paga con Yape o transferencia y escribe el número de operación.');
   const op = String(c.e.p.operation ?? '').replace(/\s/g, '');
   if (method !== 'CARD' && !/^\d{4,14}$/.test(op)) fail('BAD_OP', 'Escribe el número de operación de tu Yape o transferencia.');
-  const opKey = `${method}:${op || c.e.id}`;
+  // tarjeta (simulada): un número propio por pago, así dos pagos con tarjeta no chocan
+  const operation = op || 'tarjeta-' + codeFrom(c.e.id, 8).toLowerCase();
+  const opKey = `${method}:${operation}`;
   if (c.w.usedOps[opKey]) fail('OP_DUPLICATE', 'Ese número de operación ya se usó en otro pago.');
   const period = periodOf(s.paidUntil);
   const id = `inv-${org.id}-${period}`;
   let inv = c.w.invoices[id];
   if (inv && (inv.status === 'PAID' || inv.status === 'RECONCILED')) fail('ALREADY', 'Este mes ya está pagado.');
   const price = c.w.settings.plans[s.plan].price;
+  const pay = billingPay(c, method, operation);
   if (!inv) inv = c.w.invoices[id] = { id, orgId: org.id, period, plan: s.plan, concept: `Membresía ${c.w.settings.plans[s.plan].name} · ${periodLabel(period)}`, amount: price, issuedAt: c.t, dueAt: s.paidUntil, status: 'ISSUED' };
+  const prev = { status: s.status, paidUntil: s.paidUntil, graceUntil: s.graceUntil, plan: s.plan };
   inv.status = 'PAID';
-  inv.payment = { method, operation: op || 'tarjeta', at: c.t };
+  delete inv.reconcileNote;
   c.w.usedOps[opKey] = id;
   const wasInactive = s.status === 'INACTIVE';
   s.paidUntil = wasInactive ? addMonths(c.t, 1) : addMonths(s.paidUntil, 1);
   s.status = 'ACTIVE';
   s.graceUntil = undefined;
-  s.history.push({ at: c.t, text: `Pagó ${money(inv.amount)} (${method === 'CARD' ? 'tarjeta' : method === 'TRANSFER' ? 'transferencia' : 'Yape'}). Activa hasta el ${dateShort(s.paidUntil)}.` });
-  notify(c, org.id, 'BILLING', 'Membresía pagada', `Tu plan ${c.w.settings.plans[s.plan].name} está activo hasta el ${dateShort(s.paidUntil)}. Te llegará la factura electrónica de Mesagri.`);
-  notify(c, 'ADMIN', 'BILLING', 'Pago de membresía', `${org.name}: ${money(inv.amount)} · op. ${op || 'tarjeta'}`, { screen: 'W-14' });
+  // si el equipo no encuentra el pago en su extracto, la membresía vuelve a como estaba (BILLING_RECONCILE)
+  inv.payment = { ...pay, prev: { ...prev, after: s.paidUntil } };
+  if (inv.payment.prev!.graceUntil === undefined) delete inv.payment.prev!.graceUntil;
+  s.history.push({ at: c.t, text: `Pagó ${money(inv.amount)} (${method === 'CARD' ? 'tarjeta' : method === 'TRANSFER' ? 'transferencia' : method === 'PLIN' ? 'Plin' : 'Yape'}). Activa hasta el ${dateShort(s.paidUntil)}.` });
+  notify(c, org.id, 'BILLING', 'Membresía pagada', `Tu plan ${c.w.settings.plans[s.plan].name} está activo hasta el ${dateShort(s.paidUntil)}. Cuando confirmemos el pago en nuestra cuenta te llega la factura electrónica de Mesagri.`);
+  notify(c, 'ADMIN', 'BILLING', 'Pago de membresía por conciliar', `${org.name}: ${money(inv.amount)} · op. ${operation}${pay.payerName ? ` · a nombre de ${pay.payerName}` : ''}`, { screen: 'W-14' });
 });
 
 on('SUB_UPGRADE', (c) => {
@@ -58,7 +76,7 @@ on('SUB_UPGRADE', (c) => {
     if (!/^\d{4,14}$/.test(op)) fail('BAD_OP', 'Escribe el número de operación del pago de la diferencia.');
     if (c.w.usedOps[`${c.e.p.method}:${op}`]) fail('OP_DUPLICATE', 'Ese número de operación ya se usó en otro pago.');
   }
-  applyUpgrade(c, org, to, { method: c.e.p.method ?? 'YAPE', operation: String(c.e.p.operation ?? '') });
+  applyUpgrade(c, org, to, { ...c.e.p, method: c.e.p.method ?? 'YAPE', operation: String(c.e.p.operation ?? '').replace(/\s/g, '') });
 });
 
 /* ---------- Estados de cuenta (RF-CMS-03 a RF-CMS-06, RN-40, RN-41) ---------- */
@@ -69,14 +87,16 @@ on('STATEMENT_PAY', (c) => {
   requireMember(c.a, st.orgId);
   if (!['ISSUED', 'OVERDUE'].includes(st.status)) fail('STATE', st.status === 'PAYMENT_REGISTERED' ? 'Ya registraste el pago: lo estamos conciliando.' : 'Este estado de cuenta no tiene saldo.');
   const method = c.e.p.method;
+  if (!['YAPE', 'PLIN', 'TRANSFER'].includes(method)) fail('PAY_METHOD', 'Paga con Yape, Plin o transferencia.');
   const op = String(c.e.p.operation ?? '').replace(/\s/g, '');
   if (!/^\d{4,14}$/.test(op)) fail('BAD_OP', 'Escribe el número de operación que aparece en tu constancia.');
   if (c.w.usedOps[`${method}:${op}`]) fail('OP_DUPLICATE', 'Ese número de operación ya se usó en otro pago.');
-  st.payment = { method, operation: op, at: c.t };
+  st.payment = billingPay(c, method, op);
   st.status = 'PAYMENT_REGISTERED';
+  delete st.reconcileNote;
   c.w.usedOps[`${method}:${op}`] = st.id;
-  notify(c, st.orgId, 'BILLING', 'Pago registrado', `${st.code}: ${money(st.total)}. Ya puedes ${st.kind === 'FARMER' ? 'publicar' : st.kind === 'CARRIER' ? 'recibir ofertas' : 'recibir reservas'} con normalidad.`);
-  notify(c, 'ADMIN', 'BILLING', 'Pago por conciliar', `${c.w.orgs[st.orgId]?.name}: ${money(st.total)} · op. ${op}`, { screen: 'W-14' });
+  notify(c, st.orgId, 'BILLING', 'Pago registrado', `${st.code}: ${money(st.total)}. Ya puedes ${st.kind === 'FARMER' ? 'publicar' : st.kind === 'CARRIER' ? 'recibir ofertas' : 'recibir reservas'} con normalidad. Cuando confirmemos el pago en nuestra cuenta te llega tu comprobante.`);
+  notify(c, 'ADMIN', 'BILLING', 'Pago por conciliar', `${c.w.orgs[st.orgId]?.name}: ${money(st.total)} · op. ${op}${st.payment.payerName ? ` · a nombre de ${st.payment.payerName}` : ''}`, { screen: 'W-14' });
 });
 
 on('STATEMENT_CLAIM', (c) => {
@@ -128,10 +148,37 @@ on('BILLING_RECONCILE', (c) => {
   if (p.kind === 'INVOICE') {
     const inv = must(c.w.invoices[p.id], 'NOT_FOUND', 'No encontramos el cobro.');
     if (inv.status !== 'PAID') fail('STATE', 'Este cobro no espera conciliación.');
-    inv.status = 'RECONCILED';
-    inv.receiptNumber = 'F001-' + pad(nextSeq(c.w, 'receiptF', 1018), 4);
-    audit(c, c.a.id, 'CONCILIACIÓN', inv.id, `Membresía ${c.w.orgs[inv.orgId]?.name} · op. ${inv.payment?.operation} · ${inv.receiptNumber}`);
-    notify(c, inv.orgId, 'BILLING', 'Factura de tu membresía', `${inv.receiptNumber} · ${money(inv.amount)}.`);
+    const org = c.w.orgs[inv.orgId];
+    if (p.ok !== false) {
+      inv.status = 'RECONCILED';
+      inv.receiptNumber = 'F001-' + pad(nextSeq(c.w, 'receiptF', 1018), 4);
+      audit(c, c.a.id, 'CONCILIACIÓN', inv.id, `Membresía ${org?.name} · op. ${inv.payment?.operation} · ${inv.receiptNumber}`);
+      notify(c, inv.orgId, 'BILLING', 'Factura de tu membresía', `${inv.receiptNumber} · ${money(inv.amount)}.`);
+      return;
+    }
+    // el pago no aparece en la cuenta de Mesagri: la membresía vuelve a como estaba antes de ese pago
+    const note = String(p.note ?? '').trim();
+    if (note.length < 5) fail('REASON_REQUIRED', 'Explica por qué no coincide el pago (la MYPE lo lee).');
+    const pay = inv.payment;
+    const s = org?.subscription;
+    const upgrade = inv.id.includes('-up-');
+    if (s && pay?.prev) {
+      if (upgrade) {
+        if (s.plan === inv.plan) { s.plan = pay.prev.plan; s.history.push({ at: c.t, text: `Volvió al plan ${c.w.settings.plans[pay.prev.plan].name}: no encontramos el pago de la diferencia.` }); }
+      } else if (s.paidUntil === pay.prev.after) {
+        s.status = pay.prev.status; s.paidUntil = pay.prev.paidUntil; s.graceUntil = pay.prev.graceUntil;
+        s.history.push({ at: c.t, text: `No encontramos el pago (op. ${pay.operation}): la membresía vuelve a como estaba.` });
+      } else {
+        s.paidUntil = addMonths(s.paidUntil, -1);
+        s.history.push({ at: c.t, text: `No encontramos el pago (op. ${pay.operation}): se descuenta un mes pagado.` });
+      }
+    }
+    if (pay) delete c.w.usedOps[`${pay.method}:${pay.operation}`];
+    inv.payment = undefined;
+    inv.status = upgrade ? 'VOID' : 'ISSUED';
+    inv.reconcileNote = note.slice(0, 500);
+    audit(c, c.a.id, 'CONCILIACIÓN OBSERVADA', inv.id, `Membresía ${org?.name} · op. ${pay?.operation ?? '—'}: ${note}`, 'PAGADO', upgrade ? 'ANULADO' : 'POR PAGAR');
+    notify(c, inv.orgId, 'BILLING', 'No encontramos tu pago', `${inv.concept}: ${note}. ${upgrade ? 'Volviste a tu plan anterior.' : 'Vuelve a pagar y escribe bien el número de operación.'}`, { screen: 'B-26' });
     return;
   }
   const st = getSt(c.w, p.id);
@@ -152,6 +199,71 @@ on('BILLING_RECONCILE', (c) => {
     audit(c, c.a.id, 'CONCILIACIÓN OBSERVADA', st.id, `${st.code}: ${note}`);
     notify(c, st.orgId, 'BILLING', 'Revisa tu pago', `${st.code}: ${note}`);
   }
+});
+
+/* ---------- Datos de Mesagri: cuentas donde le pagan y WhatsApp de Soporte (doble aprobación) ---------- */
+const activeGenerals = (w: World) => Object.values(w.users).filter(u => u.role === 'ADMIN' && u.adminRole === 'GENERAL' && u.status === 'ACTIVE');
+
+export function cleanCollect(list: unknown): CollectAccount[] {
+  if (!Array.isArray(list) || !list.length) fail('NO_ACCOUNTS', 'Pon al menos una cuenta donde te paguen (Yape o banco).');
+  if (list.length > 4) fail('TOO_MANY', 'Hasta 4 cuentas.');
+  return list.map((a: any) => {
+    const kind = a?.kind;
+    if (!['YAPE', 'PLIN', 'BANK'].includes(kind)) fail('BAD_ACCOUNT', 'Elige Yape, Plin o banco.');
+    const holder = String(a?.holder ?? '').replace(/\s+/g, ' ').trim();
+    if (holder.length < 3 || holder.length > 120) fail('BAD_HOLDER', 'Escribe el titular, como sale en la cuenta.');
+    const number = String(a?.number ?? '').replace(/[\s-]/g, '');
+    if (kind !== 'BANK') {
+      if (!isPhoneValid(number)) fail('BAD_NUMBER', 'El celular del Yape o Plin tiene 9 dígitos y empieza con 9.');
+      return { kind, number, holder };
+    }
+    if (!/^\d{6,20}$/.test(number)) fail('BAD_NUMBER', 'Escribe el número de cuenta (solo números).');
+    const cci = String(a?.cci ?? '').replace(/[\s-]/g, '');
+    if (!/^\d{20}$/.test(cci)) fail('BAD_CCI', 'El CCI tiene 20 dígitos.');
+    const bank = String(a?.bank ?? '').trim();
+    if (bank.length < 2 || bank.length > 60) fail('BAD_BANK', 'Escribe el nombre del banco.');
+    return { kind, number, holder, bank, cci };
+  });
+}
+
+function applyMesagriData(c: { w: World; t: number; e?: any; n?: number }, accounts: CollectAccount[], whatsapp: string | undefined, by: string, approvedBy?: string) {
+  const m = c.w.settings.mesagri;
+  const before = m.accounts.map(a => `${a.kind} ${a.number.slice(-3)}`).join(', ');
+  c.w.settings.mesagri = { accounts, ...(whatsapp ? { whatsapp } : {}), example: false, updatedBy: approvedBy ?? by, updatedAt: c.t };
+  audit(c, approvedBy ?? by, 'CUENTAS DE MESAGRI', 'mesagri', `${accounts.map(a => `${a.kind === 'BANK' ? a.bank : a.kind} ···${a.number.slice(-3)} a nombre de ${a.holder}`).join(' · ')}${whatsapp ? ` · WhatsApp ···${whatsapp.slice(-3)}` : ''}${approvedBy ? ` · propuso ${c.w.users[by]?.name ?? by}` : ''}`, before, accounts.map(a => `${a.kind} ${a.number.slice(-3)}`).join(', '));
+}
+
+on('MESAGRI_DATA_PROPOSE', (c) => {
+  requireAdmin(c.a, 'GENERAL');
+  const accounts = cleanCollect(c.e.p.accounts);
+  const wa = String(c.e.p.whatsapp ?? '').replace(/\s/g, '');
+  if (wa && !isPhoneValid(wa)) fail('BAD_PHONE', 'El WhatsApp de Soporte tiene 9 dígitos y empieza con 9.');
+  const reason = String(c.e.p.reason ?? '').trim();
+  if (reason.length < 5) fail('REASON_REQUIRED', 'Explica el cambio (queda en auditoría).');
+  const m = c.w.settings.mesagri;
+  if (m.pending) fail('PENDING', 'Ya hay un cambio esperando aprobación: apruébalo o recházalo primero.');
+  // con una sola persona de administración general no hay a quién pedirle la segunda aprobación
+  if (activeGenerals(c.w).length <= 1) { applyMesagriData(c, accounts, wa || undefined, c.a.id); return { applied: true }; }
+  m.pending = { accounts, ...(wa ? { whatsapp: wa } : {}), reason: reason.slice(0, 300), by: c.a.id, at: c.t };
+  audit(c, c.a.id, 'PROPUESTA DE CAMBIO', 'mesagri', `Cuentas de cobro de Mesagri: ${accounts.map(a => `${a.kind === 'BANK' ? a.bank : a.kind} ···${a.number.slice(-3)}`).join(' · ')} · ${reason}`);
+  notify(c, 'ADMIN', 'SYSTEM', 'Cuentas de Mesagri por aprobar', `${c.a.name} propone cambiar dónde le pagan a Mesagri. Lo aprueba otra persona de administración general.`, { screen: 'W-14', params: { tab: 'CTA' } });
+  return { applied: false };
+});
+
+on('MESAGRI_DATA_APPROVE', (c) => {
+  requireAdmin(c.a, 'GENERAL');
+  const pd = c.w.settings.mesagri.pending;
+  if (!pd) fail('STATE', 'No hay un cambio por aprobar.');
+  if (pd.by === c.a.id) fail('SAME_PERSON', 'La segunda aprobación la da otra persona (cambia a dónde llega el dinero).');
+  applyMesagriData(c, pd.accounts, pd.whatsapp, pd.by, c.a.id);
+});
+
+on('MESAGRI_DATA_REJECT', (c) => {
+  requireAdmin(c.a, 'GENERAL');
+  const pd = c.w.settings.mesagri.pending;
+  if (!pd) fail('STATE', 'No hay un cambio por aprobar.');
+  delete c.w.settings.mesagri.pending;
+  audit(c, c.a.id, 'PROPUESTA RECHAZADA', 'mesagri', `Cuentas de cobro de Mesagri: ${String(c.e.p.reason ?? '').trim() || 'sin motivo'}`);
 });
 
 on('BILLING_REMIND', (c) => {
@@ -184,6 +296,7 @@ export function closeMonth(c: C, period: string) {
   const start = periodStart(period), end = periodStart(nextPeriod(period));
   const inP = (t?: number) => t !== undefined && t >= start && t < end;
   for (const org of Object.values(w.orgs)) {
+    if (org.status === 'DELETED') continue;
     if (org.type === 'FARMER') {
       const subs = Object.values(w.subOrders).filter(s => s.sellerOrgId === org.id && s.status === 'COMPLETED' && inP(s.completedAt)).sort((a, b) => (a.saleNumber ?? 0) - (b.saleNumber ?? 0));
       if (!subs.length) continue;
@@ -345,7 +458,7 @@ export function billingDeadlines(w: World): { at: number; run: (t: number) => vo
   for (const id in w.orgs) {
     const o = w.orgs[id];
     const s = o.subscription;
-    if (!s) continue;
+    if (!s || o.status === 'DELETED') continue;
     if (s.status === 'TRIAL' || s.status === 'ACTIVE') {
       const period = periodOf(s.paidUntil);
       const invId = `inv-${o.id}-${period}`;

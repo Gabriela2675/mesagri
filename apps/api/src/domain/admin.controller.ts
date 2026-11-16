@@ -1,7 +1,7 @@
 /* Verificación (expedientes, chacras, cuentas de cobro) y administración del panel (14.6). */
 import { Body, Controller, Get, Headers, Param, Post, Put, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { uid, SETTING_KEYS } from '@mesagri/shared';
+import { uid, SETTING_KEYS, deletionCheck } from '@mesagri/shared';
 import { rows, exec } from '../db/db';
 import { EngineService } from '../core/engine.service';
 import { Commands } from '../core/commands';
@@ -185,7 +185,45 @@ export class AdminController {
   @Body$({ reason: 'El pedido se canceló antes de entregarse' }, ['reason'])
   voidItem(@Me() u: AuthUser, @Param('id') id: string, @Param('itemId') itemId: string, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'CHARGE_VOID', { statementId: id, itemId, reason: b?.reason }, k); }
 
-  @Post('organizations/:id/suspend') @Auth('ADMIN:GENERAL')
+  @Put('organizations/:id') @Auth('ADMIN:GENERAL', 'ADMIN:SUPPORT')
+  @ApiOperation({ summary: 'Corrige los datos de una cuenta: negocio y personas (nombre del DNI, DNI y celular con el que entra). Motivo obligatorio', description: 'Si cambia el celular, se cierran las sesiones de esa persona y se olvidan sus celulares de confianza. Queda en auditoría (sin mostrar los datos completos).' })
+  @Body$({ org: { name: 'Picantería Los Geranios', address: 'Calle Misti 214, Yanahuara' }, users: [{ userId: 'u-charo', phone: '959300413' }], reason: 'Cambió de celular (lo pidió por WhatsApp)' }, ['reason'])
+  edit(@Me() u: AuthUser, @Param('id') id: string, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'ACCOUNT_EDIT', { ...b, orgId: id }, k); }
+
+  @Get('organizations/:id/deletion-check') @Auth('ADMIN:GENERAL')
+  @ApiOperation({ summary: 'Qué pasaría al eliminar la cuenta: lo que lo impide, los pedidos que se cancelan y las deudas que quedan' })
+  deletion(@Param('id') id: string) {
+    const w = this.engine.world;
+    must(w.orgs[id], 'la organización');
+    const r = deletionCheck(w, id);
+    return { blockers: r.blockers, warnings: r.warnings, cancel: r.cancel.map(s => s.code), listings: r.listings };
+  }
+
+  @Post('organizations/:id/delete') @Auth('ADMIN:GENERAL')
+  @ApiOperation({ summary: 'Elimina una cuenta (derecho de cancelación, Ley 29733): borra sus datos personales, fotos de identidad y publicaciones; quedan los pedidos sin su nombre', description: 'No se puede si tiene pedidos, envíos o lotes en curso. Se cierran sus sesiones. Si es por fraude, mejor suspender.' })
+  @Body$({ reason: 'Lo pidió por el Libro de Reclamaciones (hoja 000231)' }, ['reason'])
+  remove(@Me() u: AuthUser, @Param('id') id: string, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'ACCOUNT_DELETE', { orgId: id, reason: b?.reason }, k); }
+
+  @Post('sub-orders/:id/cancel') @Auth('ADMIN:GENERAL', 'ADMIN:SUPPORT')
+  @ApiOperation({ summary: 'Soporte cancela un pedido que todavía no sale (sin tocar la reputación de nadie)' })
+  @Body$({ reason: 'Las dos partes lo pidieron por el chat', side: 'BUYER' }, ['reason'])
+  cancelSub(@Me() u: AuthUser, @Param('id') id: string, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'SUBORDER_ADMIN_CANCEL', { subOrderId: id, reason: b?.reason, side: b?.side }, k); }
+
+  @Post('mesagri-data') @Auth('ADMIN:GENERAL')
+  @ApiOperation({ summary: 'Propone las cuentas donde le pagan a Mesagri y el WhatsApp de Soporte (lo aprueba otra persona de administración general)' })
+  @Body$({ accounts: [{ kind: 'YAPE', number: '912345678', holder: 'Mesagri S.A.C.' }], whatsapp: '912345678', reason: 'Cuenta propia de Mesagri' }, ['accounts', 'reason'])
+  mesagriData(@Me() u: AuthUser, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'MESAGRI_DATA_PROPOSE', b, k); }
+
+  @Post('mesagri-data/approve') @Auth('ADMIN:GENERAL')
+  @ApiOperation({ summary: 'Segunda aprobación del cambio de cuentas de Mesagri (no puede ser quien lo propuso)' })
+  mesagriApprove(@Me() u: AuthUser, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'MESAGRI_DATA_APPROVE', {}, k); }
+
+  @Post('mesagri-data/reject') @Auth('ADMIN:GENERAL')
+  @ApiOperation({ summary: 'Rechaza el cambio de cuentas de Mesagri' })
+  @Body$({ reason: 'El número no es de Mesagri' }, [])
+  mesagriReject(@Me() u: AuthUser, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'MESAGRI_DATA_REJECT', { reason: b?.reason }, k); }
+
+  @Post('organizations/:id/suspend') @Auth('ADMIN:GENERAL', 'ADMIN:SUPPORT')
   @ApiOperation({ summary: 'Suspende una cuenta (motivo obligatorio)' })
   @Body$({ reason: 'Fraude confirmado' }, ['reason'])
   suspend(@Me() u: AuthUser, @Param('id') id: string, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'ORG_SUSPEND', { orgId: id, reason: b?.reason }, k); }
@@ -203,12 +241,12 @@ export class AdminController {
     return { ...r, sessionsClosed: res.affectedRows, devicesForgotten: dev.affectedRows };
   }
 
-  @Post('organizations/:id/reactivate') @Auth('ADMIN:GENERAL')
+  @Post('organizations/:id/reactivate') @Auth('ADMIN:GENERAL', 'ADMIN:SUPPORT')
   @ApiOperation({ summary: 'Reactiva una cuenta suspendida' })
   reactivate(@Me() u: AuthUser, @Param('id') id: string, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'ORG_REACTIVATE', { orgId: id }, k); }
 
-  @Post('listings/:id/moderate') @Auth('ADMIN:VERIFIER', 'ADMIN:GENERAL')
-  @ApiOperation({ summary: 'Aprueba o rechaza una publicación en revisión (precio fuera de rango, nivel 1)' })
+  @Post('listings/:id/moderate') @Auth('ADMIN:VERIFIER', 'ADMIN:GENERAL', 'ADMIN:SUPPORT')
+  @ApiOperation({ summary: 'Modera cualquier publicación: APPROVE (se ve), PAUSE (pide corrección), REJECT (la oculta) o REMOVE (la elimina y borra sus fotos). Motivo obligatorio salvo para aprobar' })
   @Body$({ decision: 'APPROVE', reason: '' }, ['decision'])
   moderate(@Me() u: AuthUser, @Param('id') id: string, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'LISTING_MODERATE', { ...b, listingId: id }, k); }
 

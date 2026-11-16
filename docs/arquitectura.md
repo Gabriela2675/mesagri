@@ -146,6 +146,47 @@ dos cargos, RF-PAY-05).
   `e2e/identidad.spec.ts` con la cámara de Chromium de pruebas pasando un video con las tres fotos
   de ejemplo (un rostro 3D: el escaneo «Lee Perry-Smith» de Infinite-Realities, CC BY 3.0).
 
+## Pagos comprobables, cuentas y ayuda (migración 0012)
+
+- **Constancia que se puede comprobar**: `PAYMENT_UPLOAD`, `STATEMENT_PAY`, `SUB_PAY` y
+  `SUB_UPGRADE` aceptan `payerName` (a nombre de quién sale el pago) y, en Yape, `securityCode` (el
+  código de seguridad de 3 dígitos que Yape muestra en la constancia de quien paga y en el detalle
+  del movimiento de quien recibe). Columnas `payments.payer_name/security_code` y
+  `billing_payments.payer_name/security_code/proof_file_uuid`. El agricultor confirma solo después
+  de ver el pago en su propia cuenta; si Soporte resuelve que no llegó, `paymentStrikes()` marca a la
+  MYPE y el equipo recibe un aviso.
+- **Pagos a Mesagri que no aparecen**: `BILLING_RECONCILE` con `ok: false` también para membresías.
+  `SUB_PAY` guarda cómo estaba la membresía antes del pago (`billing_payments.revert_data`); si el
+  pago no aparece en el extracto, vuelve a eso (un cambio de plan vuelve al plan anterior) y se libera
+  el número de operación. El cruce con el extracto (`matchStatement`) corre en el navegador del
+  panel: no se sube a ningún lado.
+- **Cuentas de Mesagri** (`settings.mesagri`, en `platform_settings`): Yape, Plin o banco y el
+  WhatsApp de Soporte. `MESAGRI_DATA_PROPOSE` / `_APPROVE` / `_REJECT`: lo aprueba otra persona de
+  administración general (si hay una sola, se aplica). Con datos de ejemplo existe la tarjeta
+  simulada; con cuentas reales, `SUB_PAY` la rechaza.
+- **Cuentas**: `ACCOUNT_EDIT` (administración general y soporte) corrige negocio y personas; si
+  cambia el celular, la persistencia cierra sus sesiones, olvida sus celulares y sus códigos.
+  `ACCOUNT_DELETE` (administración general) exige que no haya pedidos, envíos ni lotes en curso
+  (`deletionCheck()`), cancela lo que no empezó (`adminCancel`, sin tocar la reputación), quita las
+  publicaciones y deja la organización y sus personas con estado `DELETED`, sin datos personales
+  (`users.phone_e164` queda vacío y el celular y el DNI libres). En la misma transacción, la
+  persistencia cierra sus sesiones, borra sus códigos, la consulta guardada de su DNI, sus fotos de
+  identidad y documentos, las fotos de sus publicaciones y chacras, y deja sin contenido sus acciones
+  en `sync_events`. Las cuentas eliminadas no generan cobros ni avisos de membresía.
+- **Moderación**: `LISTING_MODERATE` acepta `REMOVE` (elimina y borra las fotos) y oculta aunque la
+  publicación tenga pedidos en curso. `REVIEW_MODERATE` retira un comentario o una respuesta (las
+  estrellas quedan). `SUBORDER_ADMIN_CANCEL`: Soporte cancela un pedido que todavía no sale.
+- **Mensajes de ayuda** (W-21): `TICKET_OPEN` avisa al equipo con enlace; la respuesta del equipo
+  le llega a la persona con enlace a su consulta; si la persona responde, vuelve a «por responder»
+  (`ticketNeedsReply()`), y si escribe en una consulta cerrada, se vuelve a abrir.
+- **Privacidad**: el titular y el código de un pago solo los ven las partes; el detalle de los pagos
+  a Mesagri (operación, titular, código, captura), solo la propia cuenta y el equipo.
+- **Plazos de los archivos (Ley 29733)**: una vez por hora el servidor borra los archivos cuyo
+  `files.purge_after` venció (fotos del DNI y del rostro a los 90 días, audios a los 30), con su
+  contenido (`file_blobs` en cascada o el archivo de la carpeta). Antes el plazo se anotaba pero
+  nada lo cumplía.
+- **Letra chica**: `textScale` admite 0,9 (chica), 1, 1,25 y 1,5.
+
 ## Tareas programadas (14.7)
 
 Cada 20 segundos el servidor revisa si venció algún plazo (pedidos sin respuesta, conformidad

@@ -12,7 +12,8 @@
     "icons": "node gen-icons.mjs",
     "e2e": "playwright test",
     "build:autonoma": "vite build --mode autonoma",
-    "e2e:autonoma": "npx --yes http-server@14.1.1 dist-app -p 8090 -s & sleep 2; MESAGRI_WEB=http://localhost:8090 MESAGRI_LOCAL=1 playwright test; kill %1"
+    "e2e:autonoma": "npx --yes http-server@14.1.1 dist-app -p 8090 -s & sleep 2; MESAGRI_WEB=http://localhost:8090 MESAGRI_LOCAL=1 playwright test; kill %1",
+    "test": "vitest run --config smoke/smoke.config.mts"
   },
   "dependencies": {
     "@mesagri/shared": "1.0.0",

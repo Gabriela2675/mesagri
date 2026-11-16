@@ -2,7 +2,8 @@
  * Consultas sobre el mundo (13.5). Las usan el motor (para imponer reglas)
  * y la interfaz (para mostrar y explicar antes de confirmar).
  */
-import type { World, Org, SubOrder, Listing, Shipment, Statement, Review, User } from './types';
+import type { World, Org, SubOrder, Listing, Shipment, Statement, Review, User, Ticket } from './types';
+import { DEFAULT_SETTINGS, type MesagriData } from './settings';
 import { periodOf, lima, DAY } from './time';
 import { product } from './catalog';
 import { carrierCap, VCLASS_INFO, sumBy, r2 } from './rules';
@@ -236,3 +237,24 @@ export function userOf(w: World, orgId: string): User | undefined {
 }
 
 export function productName(id: string) { return product(id).name; }
+
+/** Pagos que Soporte confirmó que no llegaron (posible constancia falsa) de un comprador. */
+export function paymentStrikes(w: World, buyerOrgId: string): number {
+  let n = 0;
+  for (const d of Object.values(w.disputes)) {
+    if (d.kind === 'PAGO_NO_RECIBIDO' && d.status === 'RESOLVED' && d.resolution?.outcome === 'FAVOR_AGRICULTOR' && w.subOrders[d.subOrderId]?.buyerOrgId === buyerOrgId) n++;
+  }
+  return n;
+}
+
+/** Datos de Mesagri (cuentas de cobro y WhatsApp de Soporte); los de ejemplo si el mundo es de antes. */
+export function mesagriData(w: World): MesagriData {
+  return w.settings.mesagri ?? DEFAULT_SETTINGS.mesagri;
+}
+
+/** Consulta de ayuda que espera respuesta del equipo: nueva o con la última respuesta de la persona. */
+export function ticketNeedsReply(w: World, t: Ticket): boolean {
+  if (t.status !== 'OPEN') return false;
+  const last = t.replies[t.replies.length - 1];
+  return !last || w.users[last.by]?.role !== 'ADMIN';
+}

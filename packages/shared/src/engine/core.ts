@@ -112,6 +112,7 @@ export function requireAdmin(a: User, ...roles: string[]) {
   if (roles.length && !roles.includes(a.adminRole ?? '')) fail('FORBIDDEN', 'Tu rol del panel no permite esta acción.');
 }
 export function requireActive(o: Org) {
+  if (o.status === 'DELETED') fail('DELETED', 'Esa cuenta se eliminó.');
   if (o.status === 'SUSPENDED') fail('SUSPENDED', `La cuenta de ${o.name} está suspendida. Escríbele a Soporte.`);
 }
 

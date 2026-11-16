@@ -251,7 +251,7 @@ export function Photo({ id, label, onClick }: { id?: string; label?: string; onC
 }
 
 /** Tomar o elegir una foto (se comprime a 300 KB) o usar una de ejemplo de la demo. */
-export function PhotoPick({ value, onChange, label, kind = 'producto', sample }: { value?: string; onChange: (id: string | undefined) => void; label: string; kind?: string; sample?: Parameters<typeof samplePhoto>[1] }) {
+export function PhotoPick({ value, onChange, label, kind = 'producto', sample, sampleOk = true }: { value?: string; onChange: (id: string | undefined) => void; label: string; kind?: string; sample?: Parameters<typeof samplePhoto>[1]; sampleOk?: boolean }) {
   const A = useApp();
   const inp = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -284,8 +284,8 @@ export function PhotoPick({ value, onChange, label, kind = 'producto', sample }:
       <button className="photo add" onClick={() => inp.current?.click()} aria-label={`Tomar foto: ${label}`}>
         <div className="stack tight" style={{ alignItems: "center" }}>{busy ? <i className="spin" /> : <Icon n="camera" s="1.8em" w={1.6} />}<span className="cap" style={{ padding: "0 .5em" }}>{label}</span></div>
       </button>
-      <button className="linkbtn" onClick={useSample} style={{ alignSelf: "flex-start", fontSize: ".8em", padding: ".2em" }} aria-label={`Usar foto de ejemplo: ${label}`}>Usar ejemplo</button>
-      <input ref={inp} type="file" accept="image/*" capture="environment" className="sr" tabIndex={-1} onChange={(e: any) => { choose(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} />
+      {sampleOk && <button className="linkbtn" onClick={useSample} style={{ alignSelf: "flex-start", fontSize: ".8em", padding: ".2em" }} aria-label={`Usar foto de ejemplo: ${label}`}>Usar ejemplo</button>}
+      <input ref={inp} type="file" accept="image/*" capture={kind === 'pago' ? undefined : 'environment'} className="sr" tabIndex={-1} onChange={(e: any) => { choose(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} />
     </div>
   );
 }

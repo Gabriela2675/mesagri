@@ -32,10 +32,16 @@ test('compra: pedido, aceptación con comisión a la vista, pago directo, entreg
   await expect(screen(b)).toHaveAttribute('data-screen', 'B-12');
   await b.getByRole('button', { name: /Usar foto de ejemplo/ }).first().click();
   await b.getByLabel('Número de operación').fill('05123987');
+  const yapeCode = b.getByLabel('Código de seguridad de Yape');
+  if (await yapeCode.count()) await yapeCode.fill('472');
   await tap(b, 'Enviar constancia');
   // Wilber confirma que le llegó, prepara y sale a entregar
   await tap(f, /Confirma el pago/);
+  // la constancia trae a nombre de quién sale el pago; el agricultor confirma solo si lo ve en su cuenta
+  await expect(f.getByText('Cómo saber si de verdad te pagaron')).toBeVisible();
+  await expect(f.getByText('Rosario Valdivia Cárdenas').first()).toBeVisible();
   await tap(f, 'Sí, me llegó');
+  await f.getByRole('dialog').getByRole('button', { name: 'Sí, lo vi en mi cuenta' }).click();
   await tap(f, 'Empezar a preparar');
   await tap(f, 'Marcar listo');
   await tap(f, 'Salir a entregar');

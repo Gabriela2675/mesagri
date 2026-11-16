@@ -23,6 +23,8 @@ import { MapSketch } from '../ui/map';
 import { CodeInput } from './onboarding';
 import { HelperBanner } from './r2';
 import { localOf, isPro } from '@mesagri/shared/engine/r2';
+import { ProofFields, proofMissing, proofPayload, emptyProof, MesagriAccountCard, MethodSeg, mesagriMethods, type Proof, type MesagriMethod } from '../ui/pay';
+import { mesagriData } from '@mesagri/shared/queries';
 
 /* ---------- carrito y entrega ---------- */
 export interface SellerPlan { mode: DeliveryMode; date: number; slot: string; taxDoc: TaxDocType; pay: PayMethod; carrier?: string; pickupBy?: string; pickupDni?: string; plate?: string }
@@ -361,15 +363,22 @@ export function PlanLimitSheet({ month, order }: { month: number; order: number 
   const next = would <= (s.plans.PRO.purchaseCap ?? Infinity) ? 'PRO' : 'EMPRESA';
   const diff = r2(s.plans[next].price - s.plans[sub.plan].price);
   const trial = sub.status === 'TRIAL';
-  const [op, setOp] = useState('');
+  const methods = mesagriMethods(mesagriData(A.w).accounts);
+  const [method, setMethod] = useState<MesagriMethod>(methods[0]);
+  const [proof, setProof] = useState<Proof>(emptyProof(A.me?.name ?? ''));
+  const why = trial ? '' : proofMissing(proof, method);
   return (
     <SheetBody>
       <div className="center"><span className="icirc warn" style={{ width: "3.2em", height: "3.2em" }}><Icon n="triangle-alert" s="1.5em" /></span></div>
       <h2 className="h2 center">Este pedido pasa el límite de tu plan {s.plans[sub.plan].name}</h2>
       <Card><Kv rows={[[`Compraste en ${periodLabel(periodOf(A.now)).split(' de ')[0]}`, money(month)], ['Este pedido', money(order)], ['Llegarías a', money(would)], [`Límite del ${s.plans[sub.plan].name}`, money(s.plans[sub.plan].purchaseCap ?? 0)]]} /></Card>
       <p className="bodym center" style={{ margin: "0" }}>Desde {moneyShort(s.plans[sub.plan].purchaseCap ?? 0)} al mes el plan {s.plans[next].name} es obligatorio. {trial ? <>Estás en tu mes gratis: <b>pasar a {s.plans[next].name} no cuesta nada hasta el {dateShort(sub.trialEndsOn)}</b>.</> : <>Este mes solo pagas la diferencia: <b>{money(diff)}</b>. Luego, {money(s.plans[next].price)} al mes.</>}</p>
-      {!trial && <Field label={`N.º de operación del pago de ${money(diff)} (Yape a Mesagri)`}><Inp value={op} onInput={(v) => setOp(v.replace(/\D/g, ''))} mode="numeric" placeholder="05123987" label="Número de operación" /></Field>}
-      <Btn full disabled={!trial && op.length < 4} why={!trial && op.length < 4 ? 'Escribe el número de operación' : undefined} onClick={() => { A.patch(d => { d.flow = { ...d.flow, upgrade: { plan: next, method: 'YAPE', operation: op } }; }); A.sheet(null); A.go('B-10'); }}>Pasar a {s.plans[next].name} y comprar</Btn>
+      {!trial && <>
+        <MethodSeg value={method} onChange={setMethod} methods={methods} />
+        <MesagriAccountCard method={method} amount={diff} reference={`Plan ${s.plans[next].name}`} />
+        <ProofFields value={proof} onChange={setProof} method={method} to="Mesagri" amount={diff} photo="none" />
+      </>}
+      <Btn full disabled={!!why} why={why || undefined} onClick={() => { A.patch(d => { d.flow = { ...d.flow, upgrade: { plan: next, method, ...(trial ? { operation: '' } : proofPayload(proof, method)) } }; }); A.sheet(null); A.go('B-10'); }}>Pasar a {s.plans[next].name} y comprar</Btn>
       <Btn full kind="sec" onClick={() => A.sheet(null)}>Quitar productos</Btn>
       <p className="cap center" style={{ margin: "0" }}>Si pasas 2 meses debajo de {moneyShort(s.plans.BASICO.purchaseCap ?? 0)}, vuelves solo al Básico (RN-38).</p>
     </SheetBody>
@@ -617,31 +626,30 @@ function PaymentProof() {
   const seller = s ? A.w.orgs[s.sellerOrgId] : undefined;
   const methods = seller ? digitalMethods(seller) : [];
   const [method, setMethod] = useState<PayMethod>(s && methods.includes(s.payment.method as any) ? s.payment.method : (methods[0] ?? 'YAPE'));
-  const [op, setOp] = useState('');
-  const [photo, setPhoto] = useState<string | undefined>();
+  const [proof, setProof] = useState<Proof>(emptyProof(A.me?.name ?? ''));
   const [when, setWhen] = useState(hhmm(A.now));
   if (!s || !seller) return <Screen title="Constancia de pago"><Empty title="No encontramos el pedido" /></Screen>;
   const acct = seller.payout.find(a => (method === 'TRANSFER' ? a.kind === 'BANK' : a.kind === method));
   const visible = !['PENDING_CONFIRMATION'].includes(s.status);
+  const first = seller.name.split(' ')[0];
+  const missing = !visible ? 'Paga cuando el agricultor acepte.' : proofMissing(proof, method, { photo: true }) || (/^\d{1,2}:\d{2}$/.test(when) ? '' : 'Escribe la hora del pago, por ejemplo 19:32.');
   const send = () => {
     const [hh, mm] = when.split(':').map(Number);
     const paidAt = startOfDay(A.now) + ((hh || 0) * 60 + (mm || 0)) * 60_000;
-    const r = A.act('PAYMENT_UPLOAD', { subOrderId: s.id, method, operation: op, amount: s.total, paidAt, photoId: photo });
-    if (r.ok) { A.toast(`Enviamos tu constancia. ${seller.name.split(' ')[0]} confirma que le llegó.`); A.back(); }
+    const r = A.act('PAYMENT_UPLOAD', { subOrderId: s.id, method, amount: s.total, paidAt, ...proofPayload(proof, method) });
+    if (r.ok) { A.toast(`Enviamos tu constancia. ${first} la confirma cuando vea el dinero en su ${method === 'TRANSFER' ? 'cuenta' : PAY_LABEL[method]}.`); A.back(); }
   };
+  const why = permWhy(A.w, A.me, 'PAYMENT_UPLOAD') || missing;
   return (
-    <Screen title="Constancia de pago" sub="Sube la captura de tu pago" foot={<><Btn full onClick={send} disabled={!visible || !!permWhy(A.w, A.me, 'PAYMENT_UPLOAD')} why={permWhy(A.w, A.me, 'PAYMENT_UPLOAD')}>Enviar constancia</Btn><div className="why">{seller.name.split(' ')[0]} confirma que le llegó. Si dice que no, Soporte revisa ambas versiones.</div></>}>
+    <Screen title="Constancia de pago" sub="Sube la captura de tu pago" foot={<><Btn full onClick={send} disabled={!!why} why={why || undefined}>Enviar constancia</Btn><div className="why">{first} confirma cuando vea el dinero en su cuenta. Si dice que no le llegó, Soporte revisa ambas versiones.</div></>}>
       <div className="stack">
         <Card><div className="row between"><b className="bodym">Pedido {s.code}</b><Chip tone="warn">Por pagar</Chip></div><div className="cap">{seller.name} · {itemsShort(s).toLowerCase()}</div><div className="big mt">{money(s.total)}</div></Card>
         {methods.length > 1 && <Seg value={method} onChange={setMethod} options={methods.map(m => ({ v: m as PayMethod, l: PAY_LABEL[m as PayMethod] }))} />}
         {visible && acct ? <Card tone="soft"><div className="row"><div className="grow"><div className="cap">{acct.kind === 'BANK' ? 'Cuenta (CCI) a nombre de' : `${PAY_LABEL[acct.kind === 'PLIN' ? 'PLIN' : 'YAPE']} a nombre de`}</div><b className="bodym">{acct.holder}{acct.relation !== 'PROPIA' ? ' (autorizada)' : ''} · {acct.kind === 'BANK' ? acct.number.replace(/(\d{3})(\d{3})(\d+)(\d{2})$/, '$1 $2 … $4') : acct.number.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')}</b></div><Btn xs kind="light" onClick={() => { try { navigator.clipboard.writeText(acct.number); A.toast('Número copiado.', 'info'); } catch { A.toast(acct.number, 'info'); } }}>Copiar</Btn></div></Card>
           : <Note icon="clock" tone="warn">Verás los datos de cobro cuando el agricultor acepte tu pedido.</Note>}
-        <PhotoPick value={photo} onChange={setPhoto} label="Captura de tu pago" kind="pago" sample={{ value: money(s.total), label: `a ${acct?.holder ?? seller.name}`, stamp: op || '05123987' }} />
-        <div className="grid2">
-          <Field label="N.º de operación"><Inp value={op} onInput={(v) => setOp(v.replace(/\D/g, ''))} mode="numeric" placeholder="05123987" label="Número de operación" /></Field>
-          <Field label="Hora del pago"><Inp value={when} onInput={setWhen} placeholder="19:32" label="Hora del pago" /></Field>
-        </div>
-        <Note icon="shield-check">Mesagri nunca te pedirá tu clave del banco ni de Yape.</Note>
+        <ProofFields value={proof} onChange={setProof} method={method} to={first} amount={s.total} photo="required" />
+        <Field label="Hora del pago"><Inp value={when} onInput={setWhen} placeholder="19:32" label="Hora del pago" /></Field>
+        <Note icon="shield-check">{first} va a buscar tu pago en su propia app{method === 'YAPE' ? ' y comparar el código de seguridad' : ''}: una captura sola no basta. Mesagri nunca te pedirá tu clave del banco ni de Yape.</Note>
       </div>
     </Screen>
   );

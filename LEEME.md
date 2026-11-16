@@ -31,11 +31,11 @@ Viene de tres formas:
 
 | Tipo de usuario | Funciones |
 |---|---|
-| Agricultor | Registro con **DNI, dígito de verificación y rostro en tres ángulos** (cámara guiada con visión por computadora), publicar cosecha (formulario o voz) **con fotos reales** (hasta 3, de la cámara o la galería; se cambian después en «Editar»), pedidos con plazo y comisión a la vista, confirmar pagos, entregar con código, enviar con transportista (QR), almacén, estado de cuenta, chat, calificaciones, verificación por niveles, **solicitudes de compra** (ofrecer su precio) y **quién publica por mí** (familiar o promotor con permisos) |
-| Comprador MYPE | Catálogo con filtros, carrito por agricultor, pago directo (Yape, Plin, transferencia, efectivo), seguimiento, conformidad, reclamos, comprobantes, reportes, favoritos, planes Básico y Pro, **solicitudes de compra**, **pedidos programados** (Pro), **equipo y locales** con permisos |
+| Agricultor | Registro con **DNI, dígito de verificación y rostro en tres ángulos** (cámara guiada con visión por computadora), publicar cosecha (formulario o voz) **con fotos reales** (hasta 3, de la cámara o la galería; se cambian después en «Editar»), pedidos con plazo y comisión a la vista, confirmar pagos **viéndolos en su propia cuenta** (monto, titular y código de seguridad de Yape), entregar con código, enviar con transportista (QR), almacén, estado de cuenta, chat, calificaciones, verificación por niveles, **solicitudes de compra** (ofrecer su precio) y **quién publica por mí** (familiar o promotor con permisos) |
+| Comprador MYPE | Catálogo con filtros, carrito por agricultor, pago directo (Yape, Plin, transferencia, efectivo) **con constancia comprobable** (captura, número de operación, titular y código de seguridad de Yape), seguimiento, conformidad, reclamos, comprobantes, reportes, favoritos, planes Básico y Pro, **solicitudes de compra**, **pedidos programados** (Pro), **equipo y locales** con permisos |
 | Almacén aliado | Reservas, recepción con foto y peso, lotes y certificados, despachos, incidencias, cobros |
 | Transportista aliado | Ofertas de envío, ruta del día, recojo con **QR de la cámara**, entrega con código, flete, cobros, **conductores** y **cambio de vehículo** (vuelve a revisión) |
-| Equipo de Mesagri (panel web) | Inicio con indicadores, verificaciones (bandeja y expediente), almacenes y transportistas (verificación y red), usuarios y organizaciones (**restablecer acceso**), moderación de publicaciones, pedidos y disputas, reclamos, catálogo y traducciones (**agregar productos**), cobros y estados de cuenta, configuración con aprobación de dos personas, tarifas y rutas de envío, reportes, auditoría, **Equipo** (la administración general crea cuentas y asigna roles) y **Mi cuenta**. Cada rol (administración general, verificación, soporte, analista) ve solo lo suyo |
+| Equipo de Mesagri (panel web) | Inicio con indicadores, verificaciones (bandeja y expediente), almacenes y transportistas (verificación y red), usuarios y organizaciones (**restablecer acceso, corregir datos, ver celular y DNI con registro en auditoría, suspender y eliminar cuentas**), publicaciones (**pausar, ocultar o eliminar cualquiera**) y comentarios, pedidos y disputas (**detalle del pago y cancelación por Soporte**), **mensajes de ayuda**, reclamos, catálogo y traducciones (**agregar productos**), cobros y estados de cuenta (**cruce con el extracto** y **cuentas de Mesagri** con aprobación de dos personas), configuración con aprobación de dos personas, tarifas y rutas de envío, reportes, auditoría, **Equipo** (la administración general crea cuentas y asigna roles) y **Mi cuenta**. Cada rol (administración general, verificación, soporte, analista) ve solo lo suyo |
 
 Botones reales del celular: llamar (abre el marcador), cómo llegar (Google Maps), ubicación de la
 chacra (GPS), fotos con la cámara o de la galería y lectura del QR desde la foto. Cada persona elige
@@ -105,6 +105,59 @@ transportista (quien maneja) y al almacén (representante):
   se guarda 30 días (no se paga dos veces) y hay un tope de 300 por día (`DNI_API_DAILY_MAX`).
 - Las fotos del DNI y del rostro las ve solo el equipo de verificación y se borran a los 90 días
   (Ley 29733).
+
+## Pagos: cómo se comprueba que llegaron
+
+Un número de operación o una captura **se pueden inventar** (hay apps falsas que hacen constancias
+que parecen reales). Lo único que vale es ver el dinero **en la cuenta que lo recibe**. Por eso:
+
+- **Pedidos (la MYPE le paga al agricultor)**: Mesagri no recibe ese dinero, así que lo comprueba
+  quien lo recibe. La MYPE sube la captura de su constancia, el número de operación, **a nombre de
+  quién sale el pago** y, si pagó con Yape, el **código de seguridad de 3 dígitos** de su
+  constancia. El agricultor ve en «Confirma el pago» qué buscar: abre **su** Yape o su banco →
+  movimientos → el monto, el titular y la hora; en Yape toca el movimiento y el código de seguridad
+  debe ser el mismo. Solo si lo ve toca «Sí, me llegó» (la app vuelve a preguntar). Si no aparece,
+  «No me llegó» abre una disputa de pago: Soporte compara la constancia con los movimientos del
+  agricultor. Si el pago no llegó, la cuenta de la MYPE queda marcada («pagos que no llegaron» en
+  Usuarios) para suspenderla si se repite. En Pedidos y disputas → **Pagos sin confirmar** se ven las
+  constancias que esperan más de 24 h.
+- **Pagos a Mesagri (membresías y comisiones)**: primero el equipo pone **la cuenta real de
+  Mesagri** en Cobros → **Cuentas de Mesagri** (Yape, Plin o banco y el WhatsApp de Soporte). Ese
+  cambio lo aprueba otra persona de administración general, porque cambia a dónde llega el dinero.
+  Mientras sean las de ejemplo, la app las muestra con «(ejemplo)» y existe el pago con tarjeta
+  simulado; con las cuentas reales, la tarjeta desaparece (no hay pasarela que la compruebe). Cada
+  pago queda «por conciliar»: en Cobros → **Conciliación** se pegan los movimientos de la cuenta de
+  Mesagri (o se sube el CSV del banco) y la tabla dice cuáles aparecen con el mismo número y monto;
+  esos se concilian de una vez. Lo que no aparece se marca **«No aparece»**: el estado de cuenta
+  vuelve a deber y la membresía vuelve a como estaba antes de ese pago (un cambio de plan vuelve al
+  plan anterior).
+- **En la demo** los pagos son de prueba y se puede usar la captura de ejemplo; **en la app real no**:
+  hay que subir la de verdad (desde la galería, porque es una captura de pantalla).
+- **Más adelante, automático**: una pasarela con Yape (por ejemplo Culqi, Mercado Pago, Izipay o
+  Niubiz) confirma sola cada pago a Mesagri; pide RUC y contrato con la pasarela.
+
+## Administrar cuentas, publicaciones y ayuda (panel)
+
+- **Usuarios → ficha de la cuenta**: «Ver celular y DNI» (queda en auditoría), **Corregir datos**
+  (negocio, nombre del DNI, DNI y celular con el que entra; motivo obligatorio; si cambia el
+  celular se cierran sus sesiones), **Suspender** y **Eliminar cuenta**. Ahí mismo están sus
+  publicaciones, sus pedidos en curso y los comentarios que escribió (se pueden retirar).
+- **Eliminar una cuenta** (administración general) borra sus datos personales, sus cuentas de
+  cobro, las fotos de su DNI y de su rostro y sus publicaciones con sus fotos; cierra sus sesiones y
+  ya no entra. Quedan sus pedidos, pagos y reclamos sin su nombre (la otra parte y la SUNAT los
+  necesitan). No se puede con pedidos, envíos o lotes en curso: primero se terminan o se cancelan
+  (Pedidos y disputas → el pedido → «Cancelar el pedido»). **Si es por fraude, mejor suspender**:
+  así no puede registrarse otra vez con el mismo DNI y celular. Cuando alguien pide borrar su
+  cuenta desde la app (Perfil → Privacidad), llega como mensaje de ayuda con el botón para
+  eliminarla.
+- **Publicaciones**: «Marcadas» (las que revisan las reglas) y **«Todas las publicaciones»** para
+  buscar cualquiera y pausarla (el agricultor la corrige), ocultarla o **eliminarla** (también se
+  borran sus fotos). Sus pedidos en curso siguen.
+- **Mensajes de ayuda**: las consultas que llegan desde la app (Perfil → Ayuda) tienen su propia
+  bandeja: por responder, respondidas y cerradas, con respuestas rápidas. La persona lo lee en su
+  consulta y le llega un aviso; si vuelve a escribir, la consulta vuelve a «Por responder».
+- **Tamaño de letra**: cada persona lo elige en Perfil → Idioma y letra (chica, normal, grande o
+  extra).
 
 ## En la nube (Render + Aiven)
 
@@ -324,7 +377,7 @@ mesagri/
 │  └─ android/    APK: WebView conectado a la nube (o con la app autónoma), cámara, GPS, voz, archivos (build.sh)
 ├─ packages/
 │  └─ shared/     reglas puras (máquina de estados, topes, comisiones, fletes, plazos) y tipos
-├─ db/migrations  esquema MySQL versionado (0001 a 0009)
+├─ db/migrations  esquema MySQL versionado (0001 a 0012)
 ├─ scripts/       instalación y arranque en Windows
 ├─ infra/         Docker Compose (MySQL 8.4 + API) para un servidor
 └─ docs/          arquitectura y decisiones
@@ -347,7 +400,8 @@ npm ci                 # dependencias
 npm run build          # shared, API y web
 npm run dev:api        # API en http://localhost:3000 (necesita MySQL y .env)
 npm run dev:web        # web con recarga en http://localhost:5173 (usa la API del 3000)
-npm test               # reglas y privacidad (33 pruebas), MySQL ida y vuelta y API completo (16 pruebas)
+npm test               # reglas y privacidad (67 pruebas), MySQL ida y vuelta y API completo (30 pruebas)
+                       # y pantallas dibujadas sin navegador (6 pruebas)
 npm run e2e            # recorridos de punta a punta con el servidor (25 pruebas; con
                        # MESAGRI_TEAM_KEY=... prueba también la clave del equipo, como en la nube)
 npm run build:autonoma # app autónoma en apps/web/dist-app (APK y app web instalable)

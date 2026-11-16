@@ -24,4 +24,6 @@ export { canDo, isTitular, memberOf, isPro, FREQ_LABEL, nextWeekday, scheduleRun
 export { PROTOCOL } from './protocol';
 export * from './privacy';
 export * from './patch';
-export { defaultPrefs } from './engine/accounts';
+export { defaultPrefs, deletionCheck, TEXT_SCALES, tail, type DeletionCheck } from './engine/accounts';
+export { payProof, adminCancel } from './engine/orders';
+export { cleanCollect } from './engine/billing';

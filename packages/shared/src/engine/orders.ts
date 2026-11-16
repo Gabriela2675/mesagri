@@ -250,18 +250,22 @@ on('ORDER_PLACE', (c) => {
   return { orderId: order.id, subOrderIds: order.subOrderIds };
 });
 
-export function applyUpgrade(c: Ctx, buyer: Org, to: 'PRO' | 'EMPRESA', pay?: { method: string; operation: string }) {
+export function applyUpgrade(c: Ctx, buyer: Org, to: 'PRO' | 'EMPRESA', pay?: { method: string; operation: string; payerName?: string; securityCode?: string; photoId?: string }) {
   const s = buyer.subscription!;
   const from = s.plan;
   const diff = r2(c.w.settings.plans[to].price - c.w.settings.plans[from].price);
+  const proof = pay && s.status !== 'TRIAL' ? payProof(pay, pay.method) : {};
   s.plan = to;
   s.monthsBelow = 0;
   s.history.push({ at: c.t, text: `Subió de ${c.w.settings.plans[from].name} a ${c.w.settings.plans[to].name}${s.status === 'TRIAL' ? ' (en el mes gratis)' : ` pagando la diferencia del mes: ${money(diff)}`}` });
   if (s.status !== 'TRIAL' && pay) {
     const id = `inv-${buyer.id}-${periodOf(c.t)}-up-${c.e.id}`;
+    const photo = typeof pay.photoId === 'string' && /^[A-Za-z0-9:_.-]{3,80}$/.test(pay.photoId) ? { photoId: pay.photoId } : {};
     c.w.invoices[id] = {
       id, orgId: buyer.id, period: periodOf(c.t), plan: to, concept: `Diferencia ${c.w.settings.plans[from].name} → ${c.w.settings.plans[to].name}`, amount: diff,
-      issuedAt: c.t, dueAt: c.t, status: 'PAID', payment: { method: pay.method as any, operation: String(pay.operation), at: c.t },
+      issuedAt: c.t, dueAt: c.t, status: 'PAID',
+      // si el pago de la diferencia no aparece en la cuenta de Mesagri, vuelve al plan anterior
+      payment: { method: pay.method as any, operation: String(pay.operation), at: c.t, ...proof, ...photo, prev: { status: s.status, paidUntil: s.paidUntil, plan: from, after: s.paidUntil } },
     };
     c.w.usedOps[`${pay.method}:${pay.operation}`] = id;
   }
@@ -346,6 +350,32 @@ on('SUBORDER_SELLER_CANCEL', (c) => {
   if (seller.counters.sellerCancels >= 3) notify(c, 'ADMIN', 'SYSTEM', 'Cancelaciones repetidas', `${seller.name} canceló ${seller.counters.sellerCancels} pedidos aceptados (RN-10).`);
 });
 
+/** Soporte cancela un pedido que todavía no sale (por ejemplo, a pedido de las dos partes o por fraude). */
+on('SUBORDER_ADMIN_CANCEL', (c) => {
+  requireAdmin(c.a, 'GENERAL', 'SUPPORT');
+  const s = getSub(c.w, c.e.p.subOrderId);
+  const reason = String(c.e.p.reason ?? '').trim();
+  if (reason.length < 5) fail('REASON_REQUIRED', 'Escribe el motivo: el comprador y el agricultor lo van a leer.');
+  if (['IN_TRANSIT', 'DELIVERED', 'DISPUTED'].includes(s.status)) fail('USE_DISPUTE', 'El pedido ya salió: resuélvelo como disputa (Pedidos y disputas).');
+  if (!['PENDING_CONFIRMATION', 'CONFIRMED', 'AWAITING_HARVEST', 'PREPARING', 'READY'].includes(s.status)) fail('STATE', 'Este pedido ya terminó.');
+  const sh = s.shipmentId ? c.w.shipments[s.shipmentId] : undefined;
+  if (sh && ['PICKED_UP', 'ARRIVED'].includes(sh.status)) fail('USE_DISPUTE', 'El transportista ya recogió la carga: resuélvelo como disputa.');
+  adminCancel(c, s, c.e.p.side === 'SELLER' ? 'SELLER' : 'BUYER', `Cancelado por Soporte: ${reason}`);
+  audit(c, c.a.id, 'PEDIDO CANCELADO POR SOPORTE', s.id, `${s.code} · ${reason}`);
+});
+
+/** Cancela sin tocar la reputación de nadie (lo decide el equipo, no una de las partes). */
+export function adminCancel(c: Ctx, s: SubOrder, side: 'BUYER' | 'SELLER', note: string) {
+  const paid = s.payment.status === 'CONFIRMED' || s.payment.status === 'UPLOADED';
+  s.cancelReason = note.slice(0, 300);
+  setStatus(s, side === 'SELLER' ? 'CANCELLED_BY_SELLER' : 'CANCELLED_BY_BUYER', c.t, c.a.id, s.cancelReason);
+  releaseStock(c.w, s, c.t, c.e.id);
+  cancelShipment(c, s, false);
+  const txt = `${s.code}: ${s.cancelReason}.${paid ? ' Coordinen la devolución del pago: Mesagri no guarda el dinero.' : ''}`;
+  if (c.w.orgs[s.buyerOrgId]?.status !== 'DELETED') notify(c, s.buyerOrgId, 'ORDER', 'Pedido cancelado', txt, { screen: 'B-14', params: { id: s.id } });
+  if (c.w.orgs[s.sellerOrgId]?.status !== 'DELETED') notify(c, s.sellerOrgId, 'ORDER', 'Pedido cancelado', txt, { screen: 'A-13', params: { id: s.id } });
+}
+
 /* ---------- Preparar y entregar (RF-DEL-03) ---------- */
 on('SUBORDER_PREPARE', (c) => {
   const s = getSub(c.w, c.e.p.subOrderId);
@@ -406,11 +436,37 @@ on('PAYMENT_UPLOAD', (c) => {
   if (!/^\d{4,14}$/.test(op)) fail('BAD_OP', 'Escribe el número de operación que aparece en tu constancia (solo números).');
   const key = `${method}:${op}`;
   if (c.w.usedOps[key] && c.w.usedOps[key] !== s.id) fail('OP_DUPLICATE', 'Ese número de operación ya se usó en otro pago: no sirve para dos pedidos (RF-PAY-05).');
+  const proof = payProof(c.e.p, method);
   const amount = r2(Number(c.e.p.amount) || s.total);
-  s.payment = { status: 'UPLOADED', method, operation: op, amount, paidAt: Number(c.e.p.paidAt) || c.t, photoId: c.e.p.photoId, uploadedAt: c.t };
+  s.payment = { status: 'UPLOADED', method, operation: op, amount, paidAt: Number(c.e.p.paidAt) || c.t, photoId: c.e.p.photoId, uploadedAt: c.t, ...proof };
+  if (!s.payment.photoId) delete s.payment.photoId;
   c.w.usedOps[key] = s.id;
-  notify(c, s.sellerOrgId, 'PAYMENT', 'Constancia recibida', `${c.w.orgs[s.buyerOrgId].name} dice que pagó ${money(amount)}${Math.abs(amount - s.total) > 0.01 ? ` (el pedido es de ${money(s.total)})` : ''}. Revisa tu ${method === 'TRANSFER' ? 'cuenta' : method === 'PLIN' ? 'Plin' : 'Yape'} y confírmalo.`, { screen: 'A-14', params: { id: s.id } });
+  const where = method === 'TRANSFER' ? 'tu cuenta' : method === 'PLIN' ? 'tu Plin' : 'tu Yape';
+  const from = proof.payerName ? ` desde la cuenta de ${proof.payerName}` : '';
+  const code = proof.securityCode ? ` El código de seguridad debe ser ${proof.securityCode}.` : '';
+  notify(c, s.sellerOrgId, 'PAYMENT', 'Constancia recibida: revisa tu cuenta', `${c.w.orgs[s.buyerOrgId].name} dice que pagó ${money(amount)}${from}${Math.abs(amount - s.total) > 0.01 ? ` (el pedido es de ${money(s.total)})` : ''}. Abre ${where} y confírmalo solo si ves el dinero.${code}`, { screen: 'A-14', params: { id: s.id } });
 });
+
+/**
+ * Datos de la constancia que ayudan a quien cobra a encontrar el pago en su propia app: a nombre de
+ * quién sale y, en Yape, el código de seguridad de 3 dígitos (el mismo sale en el detalle del
+ * movimiento de quien recibe). La captura o el número de operación solos se pueden inventar.
+ */
+export function payProof(p: any, method: string): { payerName?: string; securityCode?: string } {
+  const out: { payerName?: string; securityCode?: string } = {};
+  const name = String(p?.payerName ?? '').replace(/\s+/g, ' ').trim();
+  if (name) {
+    if (name.length < 3 || name.length > 80 || !/^[\p{L}][\p{L}\s.'’&-]*$/u.test(name)) fail('BAD_PAYER', 'Escribe el nombre que sale en tu constancia (titular de la cuenta o del Yape).');
+    out.payerName = name;
+  }
+  const code = String(p?.securityCode ?? '').replace(/\s/g, '');
+  if (code) {
+    if (method !== 'YAPE') fail('BAD_CODE', 'El código de seguridad es solo de Yape.');
+    if (!/^\d{3}$/.test(code)) fail('BAD_CODE', 'El código de seguridad de Yape tiene 3 números: está en tu constancia.');
+    out.securityCode = code;
+  }
+  return out;
+}
 
 on('PAYMENT_CONFIRM', (c) => {
   const s = getSub(c.w, c.e.p.subOrderId);
@@ -521,7 +577,13 @@ on('DISPUTE_RESOLVE', (c) => {
   if (refund < 0 || refund > s.subtotal) fail('BAD_AMOUNT', 'La devolución no puede pasar el valor de los productos.');
   if (d.kind === 'PAGO_NO_RECIBIDO') {
     if (outcome === 'FAVOR_COMPRADOR') { s.payment.status = 'CONFIRMED'; s.payment.confirmedAt = c.t; }
-    else { s.payment = { status: 'NONE', method: s.payment.method }; }
+    else {
+      const op = s.payment.operation;
+      s.payment = { status: 'NONE', method: s.payment.method };
+      // el número de operación queda usado: esa constancia no sirve para otro pedido
+      const n = 1 + Object.values(c.w.disputes).filter(x => x.id !== d.id && x.kind === 'PAGO_NO_RECIBIDO' && x.status === 'RESOLVED' && x.resolution?.outcome === 'FAVOR_AGRICULTOR' && c.w.subOrders[x.subOrderId]?.buyerOrgId === s.buyerOrgId).length;
+      notify(c, 'ADMIN', 'PAYMENT', n > 1 ? `Pagos que no llegaron: ${n}` : 'Un pago no llegó', `${c.w.orgs[s.buyerOrgId]?.name}: ${s.code}${op ? ` (op. ${op})` : ''}. ${n > 1 ? 'Revisa la cuenta: puede estar usando constancias falsas.' : 'Si se repite, puede ser una constancia falsa.'}`, { screen: 'W-05', params: { id: s.buyerOrgId } });
+    }
   } else {
     if (s.status !== 'DISPUTED') fail('STATE', 'El pedido no está en disputa.');
     if (outcome === 'FAVOR_COMPRADOR') c.w.orgs[s.sellerOrgId].counters.disputesLost++;
@@ -566,6 +628,21 @@ on('REVIEW_REPLY', (c) => {
   const text = String(c.e.p.text ?? '').trim();
   if (text.length < 3) fail('TEXT', 'Escribe tu respuesta.');
   r.reply = text.slice(0, 300);
+});
+
+/** El equipo quita un comentario o una respuesta ofensiva (las estrellas quedan: son la reputación). */
+on('REVIEW_MODERATE', (c) => {
+  requireAdmin(c.a, 'GENERAL', 'SUPPORT');
+  const r = must(c.w.reviews[c.e.p.reviewId], 'NOT_FOUND', 'No encontramos la opinión.');
+  const part = c.e.p.part === 'reply' ? 'reply' : 'comment';
+  const reason = String(c.e.p.reason ?? '').trim();
+  if (reason.length < 5) fail('REASON_REQUIRED', 'Escribe el motivo (queda en auditoría).');
+  const text = part === 'reply' ? r.reply : r.comment;
+  if (!text) fail('EMPTY', part === 'reply' ? 'Esa opinión no tiene respuesta.' : 'Esa opinión no tiene comentario.');
+  if (part === 'reply') delete r.reply; else delete r.comment;
+  const author = part === 'reply' ? r.toOrg : r.fromOrg;
+  audit(c, c.a.id, 'COMENTARIO RETIRADO', r.id, `${c.w.orgs[author]?.name ?? ''}: «${String(text).slice(0, 200)}» · motivo: ${reason}`);
+  if (c.w.orgs[author]?.status !== 'DELETED') notify(c, author, 'REVIEW', 'Retiramos tu comentario', `${reason}. Las estrellas de la calificación se mantienen.`);
 });
 
 /* ---------- Chat (RF-COM-01) ---------- */
@@ -634,18 +711,23 @@ on('COMPLAINT_ANSWER', (c) => {
 on('TICKET_OPEN', (c) => {
   const text = String(c.e.p.text ?? '').trim();
   if (text.length < 5) fail('TEXT', 'Cuéntanos en qué te ayudamos.');
+  if (c.w.tickets[c.e.p.ticketId]) fail('DUPLICATE', 'Esta consulta ya se envió.');
   const n = nextSeq(c.w, 'ticket', 117);
-  c.w.tickets[c.e.p.ticketId] = { id: c.e.p.ticketId, code: '#' + n, orgId: c.a.orgId, userId: c.a.id, topic: String(c.e.p.topic ?? 'General'), text, at: c.t, status: 'OPEN', replies: [] };
-  notify(c, 'ADMIN', 'SYSTEM', `Consulta #${n}`, `${c.w.orgs[c.a.orgId]?.name}: ${text.slice(0, 80)}`, { screen: 'W-08' });
+  c.w.tickets[c.e.p.ticketId] = { id: c.e.p.ticketId, code: '#' + n, orgId: c.a.orgId, userId: c.a.id, topic: String(c.e.p.topic ?? 'General').slice(0, 60), text: text.slice(0, 1000), at: c.t, status: 'OPEN', replies: [] };
+  notify(c, 'ADMIN', 'SYSTEM', `Consulta #${n}`, `${c.w.orgs[c.a.orgId]?.name}: ${text.slice(0, 80)}`, { screen: 'W-21', params: { id: String(c.e.p.ticketId) } });
   return { code: '#' + n };
 });
 
 on('TICKET_REPLY', (c) => {
   const tk = must(c.w.tickets[c.e.p.ticketId], 'NOT_FOUND', 'No encontramos la consulta.');
-  if (c.a.role !== 'ADMIN') requireMember(c.a, tk.orgId);
+  const team = c.a.role === 'ADMIN';
+  if (team) requireAdmin(c.a, 'GENERAL', 'SUPPORT'); else requireMember(c.a, tk.orgId);
   const text = String(c.e.p.text ?? '').trim();
   if (!text) fail('TEXT', 'Escribe tu respuesta.');
-  tk.replies.push({ by: c.a.id, text: text.slice(0, 500), at: c.t });
-  if (c.e.p.close) tk.status = 'CLOSED';
-  if (c.a.role === 'ADMIN') notify(c, tk.orgId, 'SYSTEM', `Respuesta a tu consulta ${tk.code}`, text.slice(0, 120));
+  tk.replies.push({ by: c.a.id, text: text.slice(0, 1000), at: c.t });
+  // cerrar: el equipo; si alguien escribe en una consulta cerrada, se vuelve a abrir
+  if (c.e.p.close && team) tk.status = 'CLOSED';
+  else if (tk.status === 'CLOSED') tk.status = 'OPEN';
+  if (team) notify(c, tk.orgId, 'SYSTEM', `Respuesta a tu consulta ${tk.code}`, text.slice(0, 140), { screen: 'TICKET', params: { id: tk.id } });
+  else notify(c, 'ADMIN', 'SYSTEM', `Nueva respuesta en la consulta ${tk.code}`, `${c.w.orgs[tk.orgId]?.name}: ${text.slice(0, 80)}`, { screen: 'W-21', params: { id: tk.id } });
 });

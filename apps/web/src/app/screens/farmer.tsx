@@ -618,22 +618,46 @@ function ConfirmPayment() {
   const s = A.w.subOrders[A.top.p?.id as string];
   if (!s) return <Screen title="Pago"><Empty title="No encontramos el pedido" /></Screen>;
   const buyer = A.w.orgs[s.buyerOrgId];
-  const acct = A.org!.payout.find(a => (s.payment.method === 'TRANSFER' ? a.kind === 'BANK' : a.kind === s.payment.method)) ?? A.org!.payout[0];
-  const done = s.payment.status !== 'UPLOADED';
+  const pm = s.payment;
+  const acct = A.org!.payout.find(a => (pm.method === 'TRANSFER' ? a.kind === 'BANK' : a.kind === pm.method)) ?? A.org!.payout[0];
+  const done = pm.status !== 'UPLOADED';
+  const app = pm.method === 'TRANSFER' ? 'tu banco' : pm.method === 'PLIN' ? 'tu Plin' : 'tu Yape';
+  const amount = money(pm.amount ?? s.total);
+  const from = pm.payerName ?? buyer?.name ?? 'el comprador';
+  const at = pm.paidAt ? `${relDay(pm.paidAt, A.now)} cerca de las ${hhmm(pm.paidAt)}` : '';
+  const yes = async () => {
+    const ok = await A.confirm({ title: `¿Viste ${amount} en ${app}?`, text: `Confirma solo si el dinero ya aparece en los movimientos de ${app}${pm.securityCode ? ` con el código de seguridad ${pm.securityCode}` : ''}. Una captura no basta. Después no se puede deshacer.`, ok: 'Sí, lo vi en mi cuenta', cancel: 'Todavía no' });
+    if (ok && A.act('PAYMENT_CONFIRM', { subOrderId: s.id }, { ok: 'Pago confirmado. ¡Ya puedes preparar el pedido!' }).ok) A.back();
+  };
+  const no = async () => {
+    if (await A.confirm({ title: '¿No te llegó el pago?', text: `Revisaste ${app} y no aparece ${amount} de ${from}. Soporte revisa la constancia del comprador y tus movimientos. Mientras, el pedido queda en pausa.`, ok: 'No me llegó', danger: true })) {
+      A.act('PAYMENT_NOT_RECEIVED', { subOrderId: s.id, disputeId: 'dsp-' + uid() }, { ok: 'Avisamos a Soporte. Revisan ambas versiones.' });
+      A.back();
+    }
+  };
   return (
-    <Screen title={A.t('payment.title', 'Confirma el pago')} sub="El comprador dice que ya pagó" foot={done ? undefined : permWhy(A.w, A.me, 'PAYMENT_CONFIRM') ? <Note icon="lock" tone="warn">{permWhy(A.w, A.me, 'PAYMENT_CONFIRM')}</Note> : <div className="btnrow"><Btn kind="sec" onClick={async () => { if (await A.confirm({ title: '¿No te llegó el pago?', text: 'Soporte revisa la constancia del comprador y tu movimiento. Mientras, el pedido queda en pausa.', ok: 'No me llegó', danger: true })) { A.act('PAYMENT_NOT_RECEIVED', { subOrderId: s.id, disputeId: 'dsp-' + uid() }, { ok: 'Avisamos a Soporte. Revisan ambas versiones.' }); A.back(); } }}>{A.t('payment.no', 'No me llegó')}</Btn><Btn kind="dark" onClick={() => { if (A.act('PAYMENT_CONFIRM', { subOrderId: s.id }, { ok: 'Pago confirmado. ¡Ya puedes preparar el pedido!' }).ok) A.back(); }}>{A.t('payment.yes', 'Sí, me llegó')}</Btn></div>}>
+    <Screen title={A.t('payment.title', 'Confirma el pago')} sub="El comprador dice que ya pagó" foot={done ? undefined : permWhy(A.w, A.me, 'PAYMENT_CONFIRM') ? <Note icon="lock" tone="warn">{permWhy(A.w, A.me, 'PAYMENT_CONFIRM')}</Note> : <div className="btnrow"><Btn kind="sec" onClick={no}>{A.t('payment.no', 'No me llegó')}</Btn><Btn kind="dark" onClick={yes}>{A.t('payment.yes', 'Sí, me llegó')}</Btn></div>}>
       <div className="stack">
         <Card>
-          <div className="row between"><b className="bodym">{buyer?.name}</b><Chip tone={s.payment.status === 'CONFIRMED' ? 'leaf' : s.payment.status === 'NOT_RECEIVED' ? 'danger' : 'warn'}>{s.payment.status === 'CONFIRMED' ? 'Confirmado' : s.payment.status === 'NOT_RECEIVED' ? 'No recibido' : 'Por confirmar'}</Chip></div>
+          <div className="row between"><b className="bodym">{buyer?.name}</b><Chip tone={pm.status === 'CONFIRMED' ? 'leaf' : pm.status === 'NOT_RECEIVED' ? 'danger' : 'warn'}>{pm.status === 'CONFIRMED' ? 'Confirmado' : pm.status === 'NOT_RECEIVED' ? 'No recibido' : 'Por confirmar'}</Chip></div>
           <div className="cap">Pedido {s.code} · {itemsShort(s).toLowerCase()}</div>
-          <div className="big mt">{money(s.payment.amount ?? s.total)}</div>
-          {s.payment.amount !== undefined && Math.abs(s.payment.amount - s.total) > 0.01 && <div className="cap bad">El pedido es de {money(s.total)}</div>}
+          <div className="big mt">{amount}</div>
+          {pm.amount !== undefined && Math.abs(pm.amount - s.total) > 0.01 && <div className="cap bad">El pedido es de {money(s.total)}</div>}
         </Card>
+        {!done && <Card tone="soft">
+          <b className="bodym">Cómo saber si de verdad te pagaron</b>
+          <div className="stack tight mt">
+            <div className="row top g8"><span className="chip line">1</span><span className="bodym grow">Abre <b>{app}</b> (no esta pantalla) y entra a tus movimientos.</span></div>
+            <div className="row top g8"><span className="chip line">2</span><span className="bodym grow">Busca un ingreso de <b>{amount}</b> de <b>{from}</b>{at ? `, ${at}` : ''}.</span></div>
+            {pm.securityCode && <div className="row top g8"><span className="chip line">3</span><span className="bodym grow">Toca ese movimiento: el <b>código de seguridad</b> debe ser <b className="big" style={{ fontSize: '1.2em', letterSpacing: '.12em' }}>{pm.securityCode}</b>.</span></div>}
+            <div className="row top g8"><span className="chip line">{pm.securityCode ? 4 : 3}</span><span className="bodym grow">Si lo ves, toca «Sí, me llegó». Si no aparece, toca «No me llegó».</span></div>
+          </div>
+          <Note icon="triangle-alert" tone="warn">Hay apps falsas que hacen capturas y números de operación que parecen reales. Lo único que vale es lo que ves en tu propia cuenta.</Note>
+        </Card>}
         <Card>
-          {s.payment.photoId ? <Photo id={s.payment.photoId} label="Captura que subió el comprador" /> : <div className="photo"><div className="stack tight" style={{ alignItems: "center" }}><Icon n="receipt" s="2em" /><span className="cap">Sin captura: solo el número de operación</span></div></div>}
-          <div className="mt"><Kv rows={[['Medio', PAY_LABEL[s.payment.method]], ['N.º de operación', s.payment.operation ?? '—'], ['Fecha y hora', s.payment.paidAt ? `${dateShort(s.payment.paidAt)} · ${hhmm(s.payment.paidAt)}` : '—'], ['A tu cuenta', acct ? `${acct.kind === 'BANK' ? 'Cuenta' : acct.kind === 'PLIN' ? 'Plin' : 'Yape'} ···· ${acct.number.slice(-3)}` : '—']]} /></div>
+          {pm.photoId ? <Photo id={pm.photoId} label="Captura que subió el comprador" /> : <div className="photo"><div className="stack tight" style={{ alignItems: "center" }}><Icon n="receipt" s="2em" /><span className="cap">Sin captura: solo el número de operación</span></div></div>}
+          <div className="mt"><Kv rows={[['Medio', PAY_LABEL[pm.method]], ['A nombre de', pm.payerName ?? '— (no lo indicó)'], pm.method === 'YAPE' ? ['Código de seguridad', pm.securityCode ?? '— (no lo indicó)'] : null, ['N.º de operación', pm.operation ?? '—'], ['Fecha y hora', pm.paidAt ? `${dateShort(pm.paidAt)} · ${hhmm(pm.paidAt)}` : '—'], ['A tu cuenta', acct ? `${acct.kind === 'BANK' ? 'Cuenta' : acct.kind === 'PLIN' ? 'Plin' : 'Yape'} ···· ${acct.number.slice(-3)}` : '—']]} /></div>
         </Card>
-        <Note icon="info">Revisa en tu {PAY_LABEL[s.payment.method]} que el dinero llegó antes de confirmar. Si no llegó, toca «No me llegó» y Soporte lo revisa.</Note>
       </div>
     </Screen>
   );

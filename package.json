@@ -13,7 +13,7 @@
     "dev:api": "npm run build -w @mesagri/shared && npm run dev -w @mesagri/api",
     "dev:web": "npm run dev -w @mesagri/web",
     "typecheck": "npm run typecheck -w @mesagri/shared && npm run typecheck -w @mesagri/api && npm run typecheck -w @mesagri/web",
-    "test": "npm test -w @mesagri/shared && npm test -w @mesagri/api",
+    "test": "npm test -w @mesagri/shared && npm test -w @mesagri/api && npm test -w @mesagri/web",
     "e2e": "npm run e2e -w @mesagri/web",
     "build:autonoma": "npm run build:autonoma -w @mesagri/web",
     "apk": "bash apps/android/build.sh"

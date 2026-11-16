@@ -87,8 +87,8 @@ export class OrdersController {
   }
 
   @Post('sub-orders/:id/payments') @Auth('BUYER')
-  @ApiOperation({ summary: 'Constancia del pago directo al agricultor (número de operación único, RF-PAY-05)' })
-  @Body$({ method: 'YAPE', operation: '05123456', amount: 150, photoId: 'ph-123' }, ['method'])
+  @ApiOperation({ summary: 'Constancia del pago directo al agricultor (número de operación único, RF-PAY-05)', description: 'payerName: a nombre de quién sale el pago. securityCode (solo Yape): el código de seguridad de 3 dígitos de la constancia; el agricultor ve el mismo en el detalle del movimiento de su Yape. El agricultor confirma solo si ve el dinero en su cuenta.' })
+  @Body$({ method: 'YAPE', operation: '05123456', amount: 150, photoId: 'ph-123', payerName: 'Rosario Valdivia', securityCode: '472' }, ['method'])
   pay(@Me() u: AuthUser, @Param('id') id: string, @Body() b: any, @Headers('idempotency-key') k?: string) { return this.cmd.run(u, 'PAYMENT_UPLOAD', { ...b, subOrderId: id }, k); }
 
   @Post('payments/:subOrderId/confirm') @Auth('FARMER')

@@ -1,8 +1,11 @@
 /*
  * Cuentas, verificación por niveles y perfiles (6.1, 6.2, 10, RN-01, RN-02, RN-16, RN-18, RN-19, RN-28).
  */
-import type { Org, User, Evidence, VerifCase, PayoutAccount, Prefs, CaseIdentity, FaceShot, FacePose, RegistryCheck, DocReview } from '../types';
+import type { Org, User, Evidence, VerifCase, PayoutAccount, Prefs, CaseIdentity, FaceShot, FacePose, RegistryCheck, DocReview, World, SubOrder } from '../types';
 import { on, fail, audit, notify, requireMember, requireAdmin, getOrg, must, Ctx } from './core';
+import { adminCancel } from './orders';
+import { codeFrom } from '../ids';
+import { money } from '../format';
 import { isRucValid, isDniValid, isPhoneValid, initials, licenseMatches, VCLASS_INFO } from '../rules';
 import { identityAlerts, identityEvidence, isIdentityAlert, IDENTITY_KEYS, faceMatchLevel, ID_ALERTS } from '../identity';
 import { DISTRICT_BY_CODE } from '../ubigeo';
@@ -164,11 +167,14 @@ on('CONSENTS_ACCEPT', (c) => {
   audit(c, c.a.id, 'CONSENTIMIENTO', c.a.id, `Aceptó términos v${c.a.consents.version}`);
 });
 
+/** Tamaños de letra que se pueden elegir (Perfil → Idioma y letra). */
+export const TEXT_SCALES: Prefs['textScale'][] = [0.9, 1, 1.25, 1.5];
+
 on('PREFS_SET', (c) => {
   const p = c.e.p.prefs ?? {};
   const pr = c.a.prefs;
   if ('lang' in p) { if (!['es', 'qu', 'ay'].includes(p.lang)) fail('BAD_PREFS', 'Ese idioma todavía no está disponible.'); pr.lang = p.lang; }
-  if ('textScale' in p) { const v = Number(p.textScale); if (![1, 1.25, 1.5].includes(v)) fail('BAD_PREFS', 'Ese tamaño de letra no está disponible.'); pr.textScale = v as Prefs['textScale']; }
+  if ('textScale' in p) { const v = Number(p.textScale); if (!TEXT_SCALES.includes(v as Prefs['textScale'])) fail('BAD_PREFS', 'Ese tamaño de letra no está disponible.'); pr.textScale = v as Prefs['textScale']; }
   if ('numFmt' in p) { if (!['coma', 'punto'].includes(p.numFmt)) fail('BAD_PREFS', 'Formato de números no válido.'); pr.numFmt = p.numFmt; }
   for (const k of ['audioGuide', 'bilingual', 'dataSaver'] as const) if (k in p) pr[k] = !!p[k];
 });
@@ -555,6 +561,231 @@ on('ORG_REACTIVATE', (c) => {
   o.status = 'ACTIVE'; o.suspendedReason = undefined;
   audit(c, c.a.id, 'REACTIVACIÓN', o.id, `${o.name}`, 'SUSPENDIDA', 'ACTIVA');
   notify(c, o.id, 'SYSTEM', 'Tu cuenta está activa otra vez', 'Ya puedes operar con normalidad.');
+});
+
+/* ---------- El equipo corrige los datos de una cuenta (W-05) ---------- */
+const PERSON_NAME = /^[\p{L}][\p{L}\s.'’-]*$/u;
+const tidy = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+/** Muestra solo el final de un dato personal (celular, DNI) en la auditoría y los avisos. */
+export const tail = (v?: string) => (v ? '···' + String(v).slice(-3) : '—');
+
+/**
+ * El nombre del DNI, el DNI y el celular con el que se entra los corrige el equipo (la persona no
+ * puede: RN-18). También los datos del negocio. Exige un motivo y queda en auditoría.
+ */
+on('ACCOUNT_EDIT', (c: Ctx) => {
+  requireAdmin(c.a, 'GENERAL', 'SUPPORT');
+  const { w } = c;
+  const o = getOrg(w, String(c.e.p?.orgId ?? ''));
+  if (o.type === 'MESAGRI') fail('FORBIDDEN', 'Las cuentas del equipo se cambian en Equipo.');
+  if (o.status === 'DELETED') fail('DELETED', 'Esa cuenta se eliminó.');
+  const reason = tidy(c.e.p?.reason, 300);
+  if (reason.length < 5) fail('REASON_REQUIRED', 'Anota por qué se corrigen los datos (queda en auditoría).');
+  const log: string[] = [];
+  const labels = new Set<string>();
+  const x = c.e.p?.org ?? {};
+  if (x.name !== undefined) {
+    const n = tidy(x.name, 120);
+    if (n.length < 2) fail('BAD_NAME', 'Escribe el nombre del negocio o de la persona.');
+    if (n !== o.name) { log.push(`nombre «${o.name}» → «${n}»`); o.name = n; o.initials = initials(n); labels.add('nombre'); }
+  }
+  if (x.legalName !== undefined) {
+    const n = tidy(x.legalName, 160);
+    if (n !== (o.legalName ?? '')) { log.push(`razón social → «${n || '—'}»`); if (n) o.legalName = n; else delete o.legalName; labels.add('razón social'); }
+  }
+  if (x.ruc !== undefined) {
+    const r = String(x.ruc ?? '').replace(/\s/g, '');
+    if (r !== (o.ruc ?? '')) {
+      if (!r) { if (o.type !== 'FARMER') fail('NO_RUC', 'Esta cuenta necesita RUC.'); delete o.ruc; }
+      else {
+        if (!isRucValid(r)) fail('BAD_RUC', 'Ese RUC no es válido: revisa los 11 dígitos.');
+        if (Object.values(w.orgs).some(z => z.id !== o.id && z.ruc === r)) fail('RUC_TAKEN', 'Ese RUC ya es de otra cuenta (RN-18).');
+        o.ruc = r;
+      }
+      log.push(`RUC → ${r || 'sin RUC'}`); labels.add('RUC');
+    }
+  }
+  if (x.district !== undefined && x.district !== o.district) {
+    if (!DISTRICT_BY_CODE[x.district]) fail('BAD_DISTRICT', 'Elige un distrito válido.');
+    log.push(`distrito ${DISTRICT_BY_CODE[o.district]?.name ?? o.district} → ${DISTRICT_BY_CODE[x.district].name}`);
+    o.district = x.district; o.province = DISTRICT_BY_CODE[x.district].province; labels.add('distrito');
+  }
+  if (x.address !== undefined) {
+    const a = tidy(x.address, 200);
+    if (a !== (o.address ?? '')) {
+      if (o.locales?.length) { const d = o.locales.find(l => l.isDefault) ?? o.locales[0]; d.address = a; }
+      if (a) o.address = a; else delete o.address;
+      log.push('dirección'); labels.add('dirección');
+    }
+  }
+  if (x.receiver !== undefined && o.type === 'BUYER') {
+    const r = tidy(x.receiver, 120);
+    if (r !== (o.receiver ?? '')) {
+      if (o.locales?.length) { const d = o.locales.find(l => l.isDefault) ?? o.locales[0]; d.receiver = r; }
+      if (r) o.receiver = r; else delete o.receiver;
+      log.push('quién recibe'); labels.add('quién recibe');
+    }
+  }
+  if (x.pickupPoint !== undefined && o.type === 'FARMER') {
+    const r = tidy(x.pickupPoint, 160);
+    if (r !== (o.pickupPoint ?? '')) { if (r) o.pickupPoint = r; else delete o.pickupPoint; log.push('punto de recojo'); labels.add('punto de recojo'); }
+  }
+  const phoneChanged: string[] = [];
+  const users = Array.isArray(c.e.p?.users) ? c.e.p.users.slice(0, 10) : [];
+  for (const ux of users) {
+    const u = must(w.users[String(ux?.userId ?? '')], 'NOT_FOUND', 'No encontramos a esa persona.');
+    if (u.orgId !== o.id) fail('FORBIDDEN', 'Esa persona es de otra cuenta.');
+    const who = u.shortName || u.name;
+    if (ux.name !== undefined) {
+      const n = tidy(ux.name, 120);
+      if (n.length < 3 || !PERSON_NAME.test(n)) fail('BAD_NAME', 'Escribe el nombre completo, como figura en el DNI (solo letras).');
+      if (n !== u.name) { log.push(`${who}: nombre «${u.name}» → «${n}»`); u.name = n; labels.add('nombre'); }
+    }
+    if (ux.shortName !== undefined) {
+      const n = tidy(ux.shortName, 40);
+      if (n.length < 2 || n.length > 30 || !PERSON_NAME.test(n)) fail('BAD_NAME', 'Cómo lo llamamos: de 2 a 30 letras.');
+      if (n !== u.shortName) { log.push(`${who}: cómo lo llamamos → «${n}»`); u.shortName = n; labels.add('cómo te llamamos'); }
+    }
+    if (ux.phone !== undefined) {
+      const ph = String(ux.phone ?? '').replace(/\s/g, '');
+      if (ph !== u.phone) {
+        if (!isPhoneValid(ph)) fail('BAD_PHONE', 'El celular tiene 9 dígitos y empieza con 9.');
+        if (Object.values(w.users).some(z => z.id !== u.id && z.phone === ph)) fail('PHONE_TAKEN', 'Ese celular ya tiene una cuenta en Mesagri.');
+        log.push(`${who}: celular ${tail(u.phone)} → ${tail(ph)}`); u.phone = ph; phoneChanged.push(u.id); labels.add('celular');
+      }
+    }
+    if (ux.dni !== undefined) {
+      const d = String(ux.dni ?? '').replace(/\s/g, '');
+      if (d !== (u.dni ?? '')) {
+        const prevDni = u.dni;
+        if (d) {
+          if (!isDniValid(d)) fail('BAD_DNI', 'El DNI tiene 8 números.');
+          if (Object.values(w.users).some(z => z.id !== u.id && z.dni === d)) fail('DNI_TAKEN', 'Ese DNI ya pertenece a otra cuenta (RN-18).');
+          u.dni = d;
+        } else delete u.dni;
+        if (o.type === 'FARMER' && o.memberIds[0] === u.id) { if (d) o.dni = d; else delete o.dni; }
+        log.push(`${who}: DNI ${tail(prevDni)} → ${tail(d)}`); labels.add('DNI');
+      }
+    }
+  }
+  if (!log.length) fail('SAME', 'No hay cambios que guardar.');
+  audit(c, c.a.id, 'DATOS CORREGIDOS', o.id, `${o.name}: ${log.join(' · ')} · motivo: ${reason}`);
+  notify(c, o.id, 'SYSTEM', 'Actualizamos tus datos', `El equipo de Mesagri corrigió: ${[...labels].join(', ')}.${phoneChanged.length ? ' Desde ahora entras con el celular nuevo.' : ''} Si no lo pediste, escríbele a Soporte.`);
+  return { changed: [...labels], phoneChanged };
+});
+
+/* ---------- Eliminar una cuenta (W-05): se borran los datos personales y quedan los pedidos sin nombre ---------- */
+const BUSY_ORDER: SubOrder['status'][] = ['AWAITING_HARVEST', 'PREPARING', 'READY', 'IN_TRANSIT', 'DELIVERED', 'DISPUTED'];
+const SUB_LABEL: Partial<Record<SubOrder['status'], string>> = { PENDING_CONFIRMATION: 'por aceptar', CONFIRMED: 'aceptado', AWAITING_HARVEST: 'por cosechar', PREPARING: 'en preparación', READY: 'listo', IN_TRANSIT: 'en camino', DELIVERED: 'entregado, sin conformidad', DISPUTED: 'en disputa' };
+
+export interface DeletionCheck {
+  /** lo que impide eliminar (hay que terminarlo o cancelarlo antes) */
+  blockers: string[];
+  /** pedidos que se cancelan solos (todavía no empiezan ni tienen pago) */
+  cancel: SubOrder[];
+  /** lo que conviene saber (deudas que quedan sin cobrar, cuenta de ejemplo...) */
+  warnings: string[];
+  listings: number;
+}
+
+/** Qué pasa si se elimina la cuenta: lo usa el panel para avisar antes y el motor para decidir. */
+export function deletionCheck(w: World, orgId: string): DeletionCheck {
+  const o = w.orgs[orgId];
+  const out: DeletionCheck = { blockers: [], cancel: [], warnings: [], listings: 0 };
+  if (!o) return out;
+  for (const s of Object.values(w.subOrders)) {
+    if (s.buyerOrgId !== orgId && s.sellerOrgId !== orgId) continue;
+    const paid = s.payment.status === 'UPLOADED' || s.payment.status === 'CONFIRMED';
+    if (BUSY_ORDER.includes(s.status) || (s.status === 'CONFIRMED' && paid)) out.blockers.push(`Pedido ${s.code} ${SUB_LABEL[s.status] ?? ''}${paid ? ' y con pago' : ''}: termínalo o cancélalo en Pedidos y disputas.`);
+    else if (s.status === 'PENDING_CONFIRMATION' || s.status === 'CONFIRMED') out.cancel.push(s);
+  }
+  for (const d of Object.values(w.disputes)) {
+    const s = w.subOrders[d.subOrderId];
+    if (d.status !== 'RESOLVED' && s && (s.buyerOrgId === orgId || s.sellerOrgId === orgId) && !out.blockers.some(b => b.includes(s.code))) out.blockers.push(`Disputa ${d.code} abierta: resuélvela primero.`);
+  }
+  for (const sh of Object.values(w.shipments)) {
+    if (sh.carrierOrgId === orgId && ['ASSIGNED', 'GOING_TO_PICKUP', 'PICKED_UP', 'ARRIVED'].includes(sh.status)) out.blockers.push(`Envío ${sh.code} en curso: que lo termine o reasígnalo.`);
+  }
+  for (const l of Object.values(w.lots)) {
+    if ((l.farmerOrgId === orgId || l.facilityOrgId === orgId) && ['WAITING_FARMER', 'IN_DEPOSIT', 'FOR_SALE', 'DISPUTE'].includes(l.status)) out.blockers.push(`Lote ${l.code} guardado en un almacén: primero tiene que salir.`);
+  }
+  out.listings = Object.values(w.listings).filter(l => l.orgId === orgId && l.status !== 'REMOVED').length;
+  const debt = Object.values(w.statements).filter(s => s.orgId === orgId && ['ISSUED', 'OVERDUE', 'PAYMENT_REGISTERED'].includes(s.status));
+  if (debt.length) out.warnings.push(`Debe ${money(debt.reduce((a, s) => a + s.total, 0))} a Mesagri (${debt.map(s => s.code).join(', ')}): quedará sin cobrar.`);
+  if (out.cancel.length) out.warnings.push(`Se cancelan ${out.cancel.length} ${out.cancel.length === 1 ? 'pedido que todavía no empieza' : 'pedidos que todavía no empiezan'} y se avisa a la otra parte.`);
+  return out;
+}
+
+/**
+ * Elimina una cuenta a pedido de la persona (derecho de cancelación, Ley 29733) o por ser de prueba.
+ * Se borran sus datos personales (nombre, celular, DNI, dirección, cuentas de cobro, fotos de su
+ * identidad y de sus publicaciones) y no puede volver a entrar. Quedan los pedidos, pagos y reclamos
+ * sin su nombre: la otra parte y la SUNAT los necesitan. Si es por fraude, mejor suspender: así no
+ * puede registrarse otra vez con el mismo DNI y celular.
+ */
+on('ACCOUNT_DELETE', (c: Ctx) => {
+  requireAdmin(c.a, 'GENERAL');
+  const { w, t } = c;
+  const o = getOrg(w, String(c.e.p?.orgId ?? ''));
+  if (o.type === 'MESAGRI') fail('FORBIDDEN', 'La cuenta de Mesagri no se elimina.');
+  if (o.status === 'DELETED') fail('ALREADY', 'Esa cuenta ya se eliminó.');
+  const reason = tidy(c.e.p?.reason, 300);
+  if (reason.length < 5) fail('REASON_REQUIRED', 'Escribe el motivo (queda en auditoría).');
+  const chk = deletionCheck(w, o.id);
+  if (chk.blockers.length) fail('IN_PROGRESS', `Todavía no se puede eliminar: ${chk.blockers[0]}${chk.blockers.length > 1 ? ` (y ${chk.blockers.length - 1} más)` : ''}`, { blockers: chk.blockers });
+  const before = o.name;
+  // 1) pedidos que todavía no empiezan: se cancelan sin tocar la reputación de la otra parte
+  for (const s of chk.cancel) adminCancel(c, s, s.sellerOrgId === o.id ? 'SELLER' : 'BUYER', s.sellerOrgId === o.id ? 'La cuenta del agricultor se eliminó' : 'La cuenta del comprador se eliminó');
+  // 2) publicaciones: fuera del catálogo y sin fotos
+  let removed = 0;
+  for (const l of Object.values(w.listings)) {
+    if (l.orgId !== o.id) continue;
+    if (l.status !== 'REMOVED') { l.status = 'REMOVED'; l.reviewReason = 'La cuenta se eliminó'; removed++; }
+    l.photoIds = []; l.harvestSeal = false; delete l.flags;
+  }
+  // 3) solicitudes de compra, ofertas, pedidos programados y reservas
+  for (const q of Object.values(w.requests)) {
+    if (q.buyerOrgId === o.id && q.status === 'OPEN') { q.status = 'CLOSED'; q.closedAt = t; }
+    for (const of of q.offers) if (of.sellerOrgId === o.id && of.status === 'SENT') of.status = 'WITHDRAWN';
+  }
+  for (const s of Object.values(w.schedules)) if (s.buyerOrgId === o.id) { s.active = false; if (s.draft?.status === 'PENDING') s.draft.status = 'SKIPPED'; }
+  for (const b of Object.values(w.bookings)) {
+    if ((b.farmerOrgId === o.id || b.facilityOrgId === o.id) && (b.status === 'PENDING' || b.status === 'ACCEPTED')) {
+      b.status = 'CANCELLED';
+      const other = b.farmerOrgId === o.id ? b.facilityOrgId : b.farmerOrgId;
+      notify(c, other, 'STORAGE', 'Reserva cancelada', `${b.code}: la otra cuenta se eliminó.`);
+    }
+  }
+  for (const [k, f] of Object.entries(w.favorites)) {
+    if (k === o.id) { delete w.favorites[k]; continue; }
+    f.sellers = f.sellers.filter(x => x !== o.id); f.carriers = f.carriers.filter(x => x !== o.id);
+    f.listings = f.listings.filter(x => w.listings[x]?.orgId !== o.id);
+  }
+  // 4) chacras y expedientes: sin nombre, fotos ni identidad (las fotos del DNI y del rostro se borran)
+  for (const f of Object.values(w.farms)) if (f.orgId === o.id) { f.name = 'Chacra'; f.photos = []; }
+  for (const k of Object.values(w.cases)) {
+    if (k.orgId !== o.id) continue;
+    delete k.identity;
+    k.evidence = k.evidence.map(e => ({ key: e.key, label: e.label, ...(e.ok !== undefined ? { ok: e.ok } : {}) }));
+    if (['SUBMITTED', 'IN_REVIEW', 'NEEDS_INFO', 'APPEALED'].includes(k.status)) { k.status = 'REJECTED'; k.decision = { by: c.a.id, at: t, result: 'REJECT', reason: 'La cuenta se eliminó' }; }
+  }
+  // 5) la organización y sus personas
+  o.status = 'DELETED'; o.deletedAt = t; o.deletedReason = reason;
+  o.name = 'Cuenta eliminada'; o.initials = '—'; o.color = '#8A8F87';
+  for (const k of ['legalName', 'ruc', 'dni', 'address', 'receiver', 'pickupPoint', 'locales', 'suspendedReason'] as const) delete o[k];
+  o.payout = []; o.acceptsCash = false; o.serviceAreas = []; o.deliveryDays = [];
+  if (o.members) o.members = o.members.map(({ note: _n, ...m }) => ({ ...m, active: false }));
+  if (o.carrier) { o.carrier.available = false; o.carrier.vehicle = { ...o.carrier.vehicle, plate: 'X' + codeFrom(o.id, 7), docs: [] }; }
+  if (o.subscription && o.subscription.status !== 'INACTIVE') { o.subscription.status = 'INACTIVE'; delete o.subscription.graceUntil; o.subscription.history.push({ at: t, text: 'La cuenta se eliminó.' }); }
+  const userIds: string[] = [];
+  for (const u of Object.values(w.users)) {
+    if (u.orgId !== o.id) continue;
+    userIds.push(u.id);
+    u.status = 'DELETED'; u.name = 'Cuenta eliminada'; u.shortName = 'Eliminada'; u.phone = '';
+    for (const k of ['dni', 'email', 'title', 'persona', 'consents'] as const) delete u[k];
+  }
+  audit(c, c.a.id, 'CUENTA ELIMINADA', o.id, `${before} (${roleLabel(o.type)}) · motivo: ${reason} · ${chk.cancel.length} pedidos cancelados · ${removed} publicaciones quitadas · datos personales y fotos de identidad borrados`, 'ACTIVA', 'ELIMINADA');
+  return { users: userIds, cancelled: chk.cancel.map(s => s.id), listings: removed };
 });
 
 /* ---------- Favoritos (RF-CAT-08, RF-TRA-21) ---------- */

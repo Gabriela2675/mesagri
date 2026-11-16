@@ -36,6 +36,30 @@ export interface ShippingRoute {
   offerMinutes: number;      // plazo para aceptar una oferta
 }
 
+/** Dónde le pagan a Mesagri (comisiones, alquiler, fletes y membresías). */
+export interface CollectAccount {
+  kind: 'YAPE' | 'PLIN' | 'BANK';
+  /** Yape o Plin: celular de 9 dígitos · banco: número de cuenta */
+  number: string;
+  holder: string;
+  /** banco: nombre del banco y CCI (20 dígitos) */
+  bank?: string;
+  cci?: string;
+}
+
+/** Datos de Mesagri que ve la gente: cuentas de cobro y WhatsApp de Soporte. */
+export interface MesagriData {
+  accounts: CollectAccount[];
+  /** WhatsApp de Soporte (9 dígitos); sin él, la ayuda es solo por la app */
+  whatsapp?: string;
+  /** true: son datos de ejemplo (la demo). El equipo pone los suyos desde el panel (Cobros → Cuentas de Mesagri). */
+  example: boolean;
+  updatedBy?: string;
+  updatedAt?: number;
+  /** cambio propuesto: lo aprueba otra persona de administración general (cambia a dónde llega el dinero) */
+  pending?: { accounts: CollectAccount[]; whatsapp?: string; reason: string; by: string; at: number };
+}
+
 export interface Settings {
   commission: { freeSales: number; rate: number; issueDay: number; dueDay: number };
   cashThreshold: number;               // RN-04
@@ -70,6 +94,7 @@ export interface Settings {
   };
   routes: ShippingRoute[];
   languages: { enabled: string[] };
+  mesagri: MesagriData;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -132,6 +157,14 @@ export const DEFAULT_SETTINGS: Settings = {
     },
   ],
   languages: { enabled: ['es'] },
+  // datos de ejemplo: en la app real el equipo pone su Yape y su cuenta desde el panel (W-14)
+  mesagri: {
+    accounts: [
+      { kind: 'YAPE', number: '900000100', holder: 'Mesagri S.A.C.' },
+      { kind: 'BANK', number: '21500000000001', holder: 'Mesagri S.A.C.', bank: 'Banco de ejemplo', cci: '00221500000000000001' },
+    ],
+    example: true,
+  },
 };
 
 /** Claves que el panel W-10 permite proponer, con su etiqueta y cómo se leen/escriben. */
