@@ -139,6 +139,8 @@ export interface Org {
   dni?: string;
   district: string;
   province: string;
+  /** chacra principal del agricultor (A-05): solo la ven la cuenta y el equipo (RN-17) */
+  location?: PlacePin;
   address?: string;
   receiver?: string;           // quien recibe (comprador)
   businessType?: 'RESTAURANTE' | 'HOTEL' | 'BODEGA' | 'COMEDOR';
@@ -288,6 +290,26 @@ export interface Farm {
   gps: 'APP' | 'MANUAL';
   photos: string[];
   createdAt: number;
+  /** punto de la chacra: solo lo ven el agricultor y el equipo (RN-17) */
+  place?: PlacePin;
+}
+
+/** Cómo se fijó la ubicación: centro poblado o distrito del INEI, GPS del celular o dirección del buscador. */
+export type PlaceSource = 'CCPP' | 'DISTRITO' | 'GPS' | 'BUSCADOR';
+/** Ubicación verificada de una chacra (existe en el INEI o la marcó el GPS dentro del distrito). */
+export interface PlacePin {
+  lat: number;
+  lng: number;
+  /** lo que eligió la persona: «Champi Chico» o la dirección del buscador */
+  label: string;
+  /** referencia para llegar, escrita por la persona */
+  ref?: string;
+  source: PlaceSource;
+  /** código INEI del centro poblado elegido */
+  ccpp?: string;
+  /** precisión del GPS en metros */
+  accuracy?: number;
+  at: number;
 }
 
 export type CaseStatus = 'SUBMITTED' | 'IN_REVIEW' | 'NEEDS_INFO' | 'APPROVED' | 'REJECTED' | 'APPEALED';
@@ -392,6 +414,41 @@ export interface Listing {
   flags?: string[];
   /** publicación que nace de una oferta aceptada en una solicitud de compra (RF-ORD-09) */
   requestId?: string;
+  /** revisión antes de publicar: primero la automática (IA o reglas), luego el equipo */
+  review?: ListingReview;
+}
+
+/** OK: no se ve nada raro · OBSERVAR: que el equipo mire con cuidado · RECHAZAR: no parece verídica */
+export type ReviewVerdict = 'OK' | 'OBSERVAR' | 'RECHAZAR';
+export interface ReviewCheck { key: string; label: string; ok: boolean | null; detail: string }
+/** Revisión automática de una publicación: por reglas (siempre, también sin internet) o con IA (en el servidor, mira las fotos). */
+export interface AutoReview {
+  by: 'IA' | 'REGLAS';
+  at: number;
+  /** modelo de IA que revisó */
+  model?: string;
+  verdict: ReviewVerdict;
+  /** qué tan creíble parece, de 0 a 100 */
+  score: number;
+  checks: ReviewCheck[];
+  /** para el equipo */
+  summary: string;
+  /** qué corregir, en palabras simples, para el agricultor */
+  farmerMessage?: string;
+}
+export interface ListingReview {
+  /** por qué entró a revisión: publicación nueva, cambio de precio o de fotos, o corrección pedida por el equipo */
+  cause: 'NUEVA' | 'CAMBIO' | 'CORRECCION';
+  queuedAt: number;
+  auto: AutoReview;
+  /** la IA (en el servidor): mirando las fotos, ya revisó o no respondió; sin valor = solo reglas (IA no configurada o sin internet) */
+  ai?: 'PENDIENTE' | 'LISTA' | 'ERROR';
+  aiNote?: string;
+  /** última aprobación del equipo */
+  approvedAt?: number;
+  approvedBy?: string;
+  /** el equipo pidió cambios: al reactivarla vuelve a revisión */
+  changesRequested?: boolean;
 }
 
 export interface Movement { at: number; listingId: string; kind: 'INIT' | 'RESERVE' | 'RELEASE' | 'CONSUME' | 'ADJUST'; qty: number; ref?: string }

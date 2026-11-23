@@ -29,7 +29,7 @@ export class CatalogController {
   @Get('listings')
   @ApiOperation({ summary: 'Búsqueda de publicaciones activas (vista v_active_listings), con paginación por cursor' })
   @ApiQuery({ name: 'q', required: false, description: 'Producto o sinónimo (papa, chuño, cebolla...)' })
-  @ApiQuery({ name: 'product', required: false }) @ApiQuery({ name: 'province', required: false, enum: ['AREQUIPA', 'CAMANA', 'CAYLLOMA'] })
+  @ApiQuery({ name: 'product', required: false }) @ApiQuery({ name: 'province', required: false, enum: ['AREQUIPA', 'CAMANA', 'CARAVELI', 'CASTILLA', 'CAYLLOMA', 'CONDESUYOS', 'ISLAY', 'LA_UNION'] })
   @ApiQuery({ name: 'minLevel', required: false }) @ApiQuery({ name: 'limit', required: false }) @ApiQuery({ name: 'cursor', required: false })
   async listings(@Query('q') q?: string, @Query('product') product?: string, @Query('province') province?: string, @Query('minLevel') minLevel?: string, @Query('limit') limitQ?: string, @Query('cursor') cursor?: string) {
     const limit = limitOf(limitQ);
@@ -49,13 +49,16 @@ export class CatalogController {
   }
 
   @Get('listings/:id')
-  @ApiOperation({ summary: 'Detalle de una publicación (sin la ubicación exacta de la chacra, RN-17)' })
+  @ApiOperation({ summary: 'Detalle de una publicación ya publicada (sin la ubicación exacta de la chacra, RN-17, ni la revisión interna)' })
   listing(@Param('id') id: string) {
     const w = this.engine.world;
-    const l = must(w.listings[id], 'la publicación');
+    const l0 = w.listings[id];
+    // las que están en revisión, rechazadas o eliminadas no se muestran fuera de la app
+    const l = must(l0 && ['ACTIVE', 'SOLD_OUT', 'PAUSED', 'EXPIRED'].includes(l0.status) ? l0 : undefined, 'la publicación');
     const o = w.orgs[l.orgId];
     const farm = l.farmId ? w.farms[l.farmId] : undefined;
-    return { ...l, seller: o ? { id: o.id, name: o.name, district: o.district, province: o.province, level: o.level } : undefined, farm: farm ? { name: farm.name, district: farm.district, areaHa: farm.areaHa } : undefined, photoUrls: l.photoIds.map(p => `/api/v1/files/${p}`) };
+    const { review: _r, flags: _f, reviewReason: _m, ...pub } = l;
+    return { ...pub, seller: o ? { id: o.id, name: o.name, district: o.district, province: o.province, level: o.level } : undefined, farm: farm ? { name: farm.name, district: farm.district, areaHa: farm.areaHa } : undefined, photoUrls: l.photoIds.map(p => `/api/v1/files/${p}`) };
   }
 
   @Post('listings') @Auth('FARMER')

@@ -17,14 +17,17 @@ import { money, moneyShort, kg as fkg, dateShort, hhmm, relDay, ago, pct, dateNu
 import { periodOf, periodLabel, prevPeriod, periodStart, nextPeriod, startOfDay, lima, DAY, HOUR, businessDaysBetween } from '@mesagri/shared/time';
 import { uid, digitsFrom } from '@mesagri/shared/ids';
 import { orgName, itemsShort, statusInfo, notifsFor, NOTIF_ICON, PAY_LABEL, deliveryText } from '../helpers';
-import { districtName, placeLabel } from '@mesagri/shared/ubigeo';
+import { districtName, placeLabel, mapsLink } from '@mesagri/shared/ubigeo';
+import { pinSource } from '../ui/place';
+import { openExternal } from '../platform';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { auth, api, setTeamKey, type AdminSetup } from '../net';
 import { FirstAccess } from './access';
 import { IdentityReview } from './idreview';
-import { appUrl } from '../routes';
+import { appUrl, LOCAL } from '../routes';
 import { docPdf } from '../pdf';
-import type { World, Org, User, VerifCase, SubOrder, Dispute, Listing, AdminRole, Complaint } from '@mesagri/shared/types';
+import type { World, Org, User, VerifCase, SubOrder, Dispute, Listing, AdminRole, Complaint, ReviewVerdict, ListingReview } from '@mesagri/shared/types';
+import { VERDICT_LABEL } from '@mesagri/shared/review';
 import { AccountTools, OrderDetail, ProofTable, payState, listingPill, listingTitle } from './admin3';
 import { paymentStrikes, ticketNeedsReply } from '@mesagri/shared/queries';
 
@@ -34,8 +37,11 @@ interface NavItem { s: string; l: string; i: string; roles: Role[]; group?: stri
 const ALL: Role[] = ['GENERAL', 'VERIFIER', 'SUPPORT', 'ANALYST'];
 const openCase = (k: VerifCase) => ['SUBMITTED', 'IN_REVIEW', 'APPEALED', 'NEEDS_INFO'].includes(k.status);
 export const casesOf = (w: World, kinds: VerifCase['kind'][]) => Object.values(w.cases).filter(k => kinds.includes(k.kind) && openCase(k));
+/** Por revisar: toda publicación nueva o cambiada (antes de verse) y las activas marcadas de agricultores de nivel 1. */
 export function modQueue(w: World): Listing[] {
-  return Object.values(w.listings).filter(l => l.status === 'IN_REVIEW' || (l.status === 'ACTIVE' && (l.flags?.length ?? 0) > 0 && w.orgs[l.orgId]?.level <= 1)).sort((a, b) => a.createdAt - b.createdAt);
+  const at = (l: Listing) => l.review?.queuedAt ?? l.createdAt;
+  return Object.values(w.listings).filter(l => l.status === 'IN_REVIEW' || (l.status === 'ACTIVE' && (l.flags?.length ?? 0) > 0 && w.orgs[l.orgId]?.level <= 1 && !l.review?.approvedAt))
+    .sort((a, b) => (a.status === 'IN_REVIEW' ? 0 : 1) - (b.status === 'IN_REVIEW' ? 0 : 1) || at(a) - at(b));
 }
 export const NAV: NavItem[] = [
   { s: 'W-02', l: 'Inicio', i: 'house', roles: ALL },
@@ -43,7 +49,7 @@ export const NAV: NavItem[] = [
   { s: 'W-15', l: 'Almacenes', i: 'warehouse', roles: ['GENERAL', 'VERIFIER'], group: ['W-13', 'W-15'], target: { VERIFIER: 'W-13' }, badge: w => casesOf(w, ['WAREHOUSE']).length },
   { s: 'W-17', l: 'Transportistas', i: 'truck', roles: ['GENERAL', 'VERIFIER', 'SUPPORT'], group: ['W-16', 'W-17'], target: { VERIFIER: 'W-16' }, label: { SUPPORT: 'Envíos' }, badge: w => casesOf(w, ['CARRIER']).length },
   { s: 'W-05', l: 'Usuarios', i: 'users', roles: ['GENERAL', 'VERIFIER', 'SUPPORT'] },
-  { s: 'W-06', l: 'Publicaciones', i: 'package', roles: ['GENERAL', 'SUPPORT'], badge: w => modQueue(w).length },
+  { s: 'W-06', l: 'Publicaciones', i: 'package', roles: ['GENERAL', 'VERIFIER', 'SUPPORT'], badge: w => modQueue(w).length },
   { s: 'W-07', l: 'Pedidos y disputas', i: 'shopping-bag', roles: ['GENERAL', 'SUPPORT'], badge: w => Object.values(w.disputes).filter(d => d.status !== 'RESOLVED').length },
   { s: 'W-21', l: 'Mensajes de ayuda', i: 'message-circle', roles: ['GENERAL', 'SUPPORT'], badge: w => Object.values(w.tickets).filter(t => ticketNeedsReply(w, t)).length },
   { s: 'W-08', l: 'Reclamos', i: 'file-text', roles: ['GENERAL', 'SUPPORT'], badge: w => Object.values(w.complaints).filter(c => c.status === 'OPEN').length },
@@ -318,7 +324,7 @@ function Dashboard() {
     ['receipt', 'Pagos a Mesagri por conciliar', countPill(Object.values(w.statements).filter(s => s.status === 'PAYMENT_REGISTERED').length + Object.values(w.invoices).filter(i => i.status === 'PAID').length), 'W-14', ['GENERAL']],
     ['banknote', 'Pagos de pedidos sin confirmar (24 h)', countPill(Object.values(w.subOrders).filter(s => s.payment.status === 'UPLOADED' && A.now - (s.payment.uploadedAt ?? A.now) > 24 * HOUR).length), 'W-07', ['GENERAL', 'SUPPORT']],
     ['banknote', 'Cuentas vencidas', countPill(Object.values(w.statements).filter(s => s.status === 'OVERDUE').length), 'W-14', ['GENERAL']],
-    ['triangle-alert', 'Publicaciones marcadas', countPill(modQueue(w).length), 'W-06', ['GENERAL', 'SUPPORT']],
+    ['scan-search', 'Publicaciones por revisar', countPill(modQueue(w).length), 'W-06', ['GENERAL', 'VERIFIER', 'SUPPORT']],
     ['truck', 'Reclamos de envíos', countPill(Object.values(w.shipments).filter(s => s.claim && s.claim.status !== 'RESOLVED').length), 'W-17', ['GENERAL', 'SUPPORT']],
   ];
   const ind = pilotIndicators(w, A.now);
@@ -496,6 +502,13 @@ function CaseFile() {
       : ['Nombre y DNI', `${u?.name ?? o.name} · ${maskDni(u?.dni)}`, 'Consulta a RENIEC (simulada)', <Pill>Coincide</Pill>],
     ...(o.ruc ? [['RUC', `${maskRuc(o.ruc)} · ${o.legalName ?? o.name}`, 'Padrón de la SUNAT (de prueba)', pad ? <Pill tone={pad.estado === 'ACTIVO' && pad.condicion === 'HABIDO' ? '' : 'danger'}>{pad.estado} · {pad.condicion}</Pill> : <Pill tone="gray">Sin datos</Pill>] as [string, string, string, ReactNode]] : []),
     ...(farm.length ? [['Chacra', `${farm.map(f => `${String(f.areaHa).replace('.', ',')} ha · ${districtName(f.district)}`).join(' · ')}`, 'GPS de las fotos (app)', <Pill tone={farm.some(f => f.gps === 'APP') ? '' : 'warn'}>{farm.some(f => f.gps === 'APP') ? 'Dentro del área' : 'Ubicación manual'}</Pill>] as [string, string, string, ReactNode]] : []),
+    ...(() => {
+      const f = farm.find(x => x.place && x.place.source !== 'DISTRITO');
+      const pin = o.location && o.location.source !== 'DISTRITO' ? o.location : f?.place ?? o.location;
+      if (!pin) return [] as [string, string, string, ReactNode][];
+      const where = pin === o.location ? o.district : f?.district ?? o.district;
+      return [['Ubicación de la chacra', `${pin.label} · ${placeLabel(where)}${pin.ref ? ` · «${pin.ref}»` : ''}`, pinSource(pin), <button className="linkbtn" onClick={() => openExternal(mapsLink(pin.lat, pin.lng))}><Icon n="external-link" s="1em" /> Ver en Google Maps</button>]] as [string, string, string, ReactNode][];
+    })(),
     ['Celular', u?.phone ? `${u.phone.slice(0, 3)} ••• ${u.phone.slice(-3)}` : '—', 'Otras cuentas de Mesagri', <Pill tone={dupPhone ? 'danger' : ''}>{dupPhone ? 'Repetido' : 'Único'}</Pill>],
     ...(acct ? [['Cuenta de cobro', `${acct.kind === 'BANK' ? 'Cuenta' : acct.kind === 'PLIN' ? 'Plin' : 'Yape'} ${acct.relation === 'PROPIA' ? 'propio' : `de ${acct.holder}`}`, acct.relation === 'PROPIA' ? 'A su nombre' : 'Autorización firmada (RN-28)', <Pill tone={acct.relation === 'PROPIA' ? '' : 'warn'}>{acct.relation === 'PROPIA' ? 'Vigente' : 'De tercero'}</Pill>] as [string, string, string, ReactNode]] : []),
   ];
@@ -654,19 +667,55 @@ function OrgCard({ o }: { o: Org }) {
   );
 }
 
-/* ================= W-06 · Moderación de publicaciones ================= */
-function reasonOf(w: World, l: Listing): [string, 'warn' | 'danger' | 'gray'] {
+/* ================= W-06 · Revisión y moderación de publicaciones ================= */
+const VERDICT_TONE: Record<ReviewVerdict, '' | 'warn' | 'danger'> = { OK: '', OBSERVAR: 'warn', RECHAZAR: 'danger' };
+const CAUSE_LABEL: Record<ListingReview['cause'], string> = { NUEVA: 'Nueva', CAMBIO: 'Cambió fotos o precio', CORRECCION: 'Corregida' };
+function reasonOf(w: World, l: Listing): [string, 'warn' | 'danger' | 'gray' | ''] {
+  if (l.status === 'IN_REVIEW' && l.review) return [`${VERDICT_LABEL[l.review.auto.verdict]}${l.review.ai === 'PENDIENTE' ? ' · IA mirando' : l.review.ai === 'LISTA' ? ' · IA' : ''}`, (VERDICT_TONE[l.review.auto.verdict] || '') as any];
   if (l.reviewReason) return [/RN-23|rinde/.test(l.reviewReason) ? 'Cantidad poco creíble' : l.reviewReason, 'warn'];
   const f: string[] = l.flags ?? [];
   const price = f.find(x => x.startsWith('Precio'));
-  if (price) return [price.replace('Precio ', 'Precio ').replace(' del sugerido', ' frente al sugerido'), 'warn'];
+  if (price) return [price.replace(' del sugerido', ' frente al sugerido'), 'warn'];
   if (f.length) return [f[0], 'gray'];
   return ['Revisión', 'gray'];
+}
+/** ¿Está activa la IA en el servidor? (en la versión sin internet, no hay) */
+function useAiInfo(A: AppCtx): { ai: boolean; model?: string | null; today?: number; dailyMax?: number } | undefined {
+  const [info, setInfo] = useState<{ ai: boolean; model?: string | null; today?: number; dailyMax?: number }>();
+  useEffect(() => {
+    let on = true;
+    if (LOCAL) { setInfo({ ai: false }); return; }
+    (async () => {
+      try { const token = await A.store.sessions.token(A.me!.id); const r = await api<any>('/review/info', { token, timeoutMs: 8000 }); if (on) setInfo(r); } catch { /* sin datos */ }
+    })();
+    return () => { on = false; };
+  }, []);
+  return info;
+}
+function AutoReviewCard({ l, onUseMessage }: { l: Listing; onUseMessage: (m: string) => void }) {
+  const A = useApp();
+  const r = l.review!;
+  const a = r.auto;
+  const head = r.ai === 'PENDIENTE' ? 'La IA está mirando las fotos…' : r.ai === 'LISTA' ? `Revisión de la IA${a.model ? ` (${a.model})` : ''}` : r.ai === 'ERROR' ? 'Revisión por reglas (la IA no respondió)' : 'Revisión automática por reglas';
+  return (
+    <div className="wcard">
+      <div className="row between wrap g8"><h2 style={{ margin: 0 }}><Icon n={r.ai === 'LISTA' ? 'bot' : 'list-checks'} s="1em" /> {head}</h2><span className="row g8"><Pill tone={VERDICT_TONE[a.verdict]}>{VERDICT_LABEL[a.verdict]}</Pill><Pill tone="gray">{a.score}/100</Pill></span></div>
+      {r.ai === 'ERROR' && r.aiNote && <p className="wnote">{r.aiNote}</p>}
+      {!r.ai && <p className="wnote">Sin IA en este servidor (o en la versión sin internet): las reglas miran precio, cantidad, de dónde salen las fotos y el historial, pero no qué muestran las fotos. Míralas tú.</p>}
+      <table className="wtable" style={{ marginTop: '8px' }}><tbody>{a.checks.map((c, i) => (
+        <tr key={c.key + i}><td style={{ width: '1.6em' }}><span style={{ color: c.ok === true ? 'var(--forest)' : c.ok === false ? 'var(--danger)' : '#9A6B00' }}><Icon n={c.ok === true ? 'circle-check' : c.ok === false ? 'circle-x' : 'triangle-alert'} s="1.1em" /></span></td><td><b>{c.label}</b><div className="cap">{c.detail}</div></td></tr>
+      ))}</tbody></table>
+      <p className="wnote" style={{ marginBottom: 0 }}><b>Resumen:</b> {a.summary}</p>
+      {a.farmerMessage && <p className="wnote" style={{ marginBottom: 0 }}><b>Sugerencia para el agricultor:</b> {a.farmerMessage} <button className="linkbtn" style={{ padding: 0, minHeight: 0 }} onClick={() => onUseMessage(a.farmerMessage!)}>Usar este mensaje</button></p>}
+      <p className="wnote" style={{ marginBottom: 0 }}>{CAUSE_LABEL[r.cause]} · en revisión desde {ago(r.queuedAt, A.now)}{r.approvedAt ? ` · la aprobó ${A.w.users[r.approvedBy ?? '']?.name ?? 'el equipo'} ${ago(r.approvedAt, A.now)}` : ''}. La revisión automática ayuda; la decisión es del equipo.</p>
+    </div>
+  );
 }
 function Moderation() {
   const A = useApp();
   const w = A.w;
   const queue = modQueue(w);
+  const ai = useAiInfo(A);
   const [tab, setTab] = useState<'Q' | 'ALL'>(A.top.p?.all ? 'ALL' : 'Q');
   const [q, setQ] = useState<string>(A.top.p?.q ?? '');
   const [showGone, setShowGone] = useState(false);
@@ -678,9 +727,11 @@ function Moderation() {
   const act = async (decision: 'APPROVE' | 'REJECT' | 'PAUSE' | 'REMOVE') => {
     if (!l) return;
     if (decision === 'REMOVE' && !await A.confirm({ title: '¿Eliminar esta publicación?', text: 'Sale del catálogo y se borran sus fotos. No vuelve (el agricultor puede publicar otra). Sus pedidos en curso siguen.', ok: 'Eliminar', danger: true })) return;
+    if (decision === 'APPROVE' && l.status === 'IN_REVIEW' && l.review?.auto.verdict === 'RECHAZAR' && !await A.confirm({ title: '¿Publicarla igual?', text: `La revisión automática dice «${VERDICT_LABEL.RECHAZAR.toLowerCase()}»: ${l.review.auto.summary}`, ok: 'Sí, publicar' })) return;
+    const was = l.status;
     const r = A.act('LISTING_MODERATE', { listingId: l.id, decision, reason: decision === 'APPROVE' ? '' : msg }, { quiet: true });
     if (!r.ok) { A.toast(r.error!.message, 'err'); return; }
-    A.toast(decision === 'APPROVE' ? 'Aprobada: ya se ve en el catálogo.' : decision === 'PAUSE' ? 'Pedimos la corrección al agricultor (con audio).' : decision === 'REMOVE' ? 'Publicación eliminada y sus fotos borradas.' : 'Publicación ocultada del catálogo.');
+    A.toast(decision === 'APPROVE' ? (was === 'IN_REVIEW' ? 'Aprobada y publicada: ya se ve en el catálogo.' : 'Aprobada: ya se ve en el catálogo.') : decision === 'PAUSE' ? 'Le pedimos los cambios al agricultor (con audio). Cuando corrija, vuelve a esta cola.' : decision === 'REMOVE' ? 'Publicación eliminada y sus fotos borradas.' : was === 'IN_REVIEW' ? 'Rechazada: no se publica.' : 'Publicación ocultada del catálogo.');
     setMsg(''); if (tab === 'Q') setSel(queue.find(x => x.id !== l.id)?.id);
   };
   const s = l ? w.orgs[l.orgId] : undefined;
@@ -689,20 +740,20 @@ function Moderation() {
   const prev = l ? Object.values(w.listings).filter(x => x.orgId === l.orgId && x.id !== l.id).length : 0;
   // La nota y la pregunta al agricultor siguen al motivo: precio muy bajo, muy alto u otra regla
   const why = diff <= -0.3 ? 'low' : diff >= 0.5 ? 'high' : 'other';
-  const note = why === 'low' ? 'Un precio muy bajo puede ser un error de unidad (por arroba en vez de kg) o un señuelo. Se le pregunta antes de ocultar.'
-    : why === 'high' ? 'Un precio muy alto suele ser un error al dictar (15 en vez de 1,50) o el precio del saco puesto por kilo. Se le pregunta antes de ocultar.'
-    : 'Revisa la regla que la marcó, la foto y la chacra. Si algo no cuadra, se le pregunta antes de ocultar.';
   const ask = why === 'low' ? '¿El precio es por kilo o por arroba?' : why === 'high' ? '¿El precio es por kilo o por saco?' : '¿La cantidad y el precio son correctos?';
+  const inReview = l?.status === 'IN_REVIEW';
   const flagged = l ? queue.some(x => x.id === l.id) : false;
+  const farm = l?.farmId ? w.farms[l.farmId] : undefined;
+  const aiLine = LOCAL ? 'Versión sin internet: revisión por reglas y luego el equipo.' : ai === undefined ? 'Primero la revisión automática y luego el equipo: recién ahí se publica.' : ai.ai ? `IA activa (${ai.model}) · ${ai.today ?? 0} de ${ai.dailyMax} revisiones hoy · luego decide el equipo` : 'IA no configurada (ANTHROPIC_API_KEY en Render): revisión por reglas y luego el equipo.';
   return (
-    <WebFrame title="Publicaciones" sub="Las marcadas por reglas se revisan aquí; además puedes buscar cualquier publicación para pausarla, ocultarla o eliminarla" right={<WSearch value={q} onInput={setQ} placeholder="Buscar producto o agricultor" />}>
-      <Tabs value={tab} onChange={(t) => { setTab(t); setSel(t === 'Q' ? queue[0]?.id : undefined); }} options={[['Q', `Marcadas (${queue.length})`], ['ALL', 'Todas las publicaciones']]} />
+    <WebFrame title="Publicaciones" sub={aiLine} right={<WSearch value={q} onInput={setQ} placeholder="Buscar producto o agricultor" />}>
+      <Tabs value={tab} onChange={(t) => { setTab(t); setSel(t === 'Q' ? queue[0]?.id : undefined); }} options={[['Q', `Por revisar (${queue.length})`], ['ALL', 'Todas las publicaciones']]} />
       <div className="split">
         <div className="wcard">
           <div className="row between wrap"><h2 style={{ margin: 0 }}>{tab === 'Q' ? `Cola (${list.length})` : `Publicaciones (${list.length})`}</h2>{tab === 'ALL' && <label className="cap row g8" style={{ alignItems: 'center' }}><input type="checkbox" checked={showGone} onChange={(e: any) => setShowGone(e.currentTarget.checked)} /> Ver también las eliminadas</label>}</div>
-          <table className="wtable resp"><thead><tr><th>Publicación</th><th>Agricultor</th><th>{tab === 'Q' ? 'Motivo' : 'Estado'}</th><th>Desde</th></tr></thead>
-            <tbody>{list.slice(0, 150).map(x => { const [m, tone] = reasonOf(w, x); return <Row key={x.id} sel={x.id === sel} onOpen={() => { setSel(x.id); setMsg(''); }}><td data-l="Publicación"><b>{product(x.productId).name}{x.variety ? ` ${x.variety}` : ''} · {x.unit === 'kg' ? fkg(x.qtyTotal ?? x.available) : `${numTrim(x.qtyTotal ?? x.available)} ${UNIT_LABEL[x.unit].many}`}</b><div className="cap">{money(x.price)} por {x.unit === 'kg' ? 'kg' : UNIT_LABEL[x.unit].one}</div></td><td data-l="Agricultor">{orgName(w, x.orgId)}</td><td data-l={tab === 'Q' ? 'Motivo' : 'Estado'}>{tab === 'Q' ? <Pill tone={tone}>{m}</Pill> : listingPill(x)}</td><td data-l="Desde">{ago(x.createdAt, A.now).replace('hace ', '')}</td></Row>; })}</tbody></table>
-          {list.length === 0 && <p className="wnote">{tab === 'Q' ? 'La cola está vacía.' : 'No hay publicaciones con esa búsqueda.'}</p>}
+          <table className="wtable resp"><thead><tr><th>Publicación</th><th>Agricultor</th><th>{tab === 'Q' ? 'Revisión' : 'Estado'}</th><th>Desde</th></tr></thead>
+            <tbody>{list.slice(0, 150).map(x => { const [m, tone] = reasonOf(w, x); return <Row key={x.id} sel={x.id === sel} onOpen={() => { setSel(x.id); setMsg(''); }}><td data-l="Publicación"><b>{product(x.productId).name}{x.variety ? ` ${x.variety}` : ''} · {x.unit === 'kg' ? fkg(x.qtyTotal ?? x.available) : `${numTrim(x.qtyTotal ?? x.available)} ${UNIT_LABEL[x.unit].many}`}</b><div className="cap">{money(x.price)} por {x.unit === 'kg' ? 'kg' : UNIT_LABEL[x.unit].one}{x.status === 'IN_REVIEW' && x.review ? ` · ${CAUSE_LABEL[x.review.cause].toLowerCase()}` : ''}</div></td><td data-l="Agricultor">{orgName(w, x.orgId)}</td><td data-l={tab === 'Q' ? 'Revisión' : 'Estado'}>{tab === 'Q' ? <Pill tone={tone}>{m}</Pill> : listingPill(x)}</td><td data-l="Desde">{ago(x.review?.queuedAt ?? x.createdAt, A.now).replace('hace ', '')}</td></Row>; })}</tbody></table>
+          {list.length === 0 && <p className="wnote">{tab === 'Q' ? 'No hay publicaciones por revisar.' : 'No hay publicaciones con esa búsqueda.'}</p>}
           {list.length > 150 && <p className="wnote">Mostramos 150: busca por producto o agricultor.</p>}
         </div>
         {l && s && (
@@ -710,28 +761,30 @@ function Moderation() {
             <div className="wcard">
               <div className="row between"><h2 style={{ margin: 0 }}>Detalle</h2>{listingPill(l)}</div>
               <div className="row" style={{ gap: "14px", marginTop: '8px' }}><span className="tile lg" style={{ background: product(l.productId).color, width: '76px', height: '76px', fontSize: '34px' }}>{product(l.productId).letter}</span><div><b style={{ fontSize: "19px" }}>{listingTitle(l)}</b><div className="price" style={{ fontSize: "18px" }}>{money(pricePerKg(l))} por kg</div><div className="wnote" style={{ margin: "2px 0 0" }}><button className="linkbtn" style={{ padding: 0, minHeight: 0 }} onClick={() => A.go('W-05', { id: s.id })}>{s.name}</button> · {districtName(s.district)} · nivel {s.level}</div></div></div>
-              {l.photoIds.length > 0 ? <div className="wphotos" style={{ marginTop: '10px' }}>{l.photoIds.map((p, i) => <figure key={p}><div className="photo"><Photo id={p} /></div><figcaption>{i === 0 ? 'Portada' : `Foto ${i + 1}`}{l.harvestSeal && i === 0 ? ' · cosechado hoy' : ''}</figcaption></figure>)}</div> : <p className="wnote">Sin fotos.</p>}
+              {l.photoIds.length > 0 ? <div className="wphotos" style={{ marginTop: '10px' }}>{l.photoIds.map((p, i) => <figure key={p}><div className="photo"><Photo id={p} /></div><figcaption>{i === 0 ? 'Portada' : `Foto ${i + 1}`}{p.startsWith('ph-gal-') ? ' · de la galería' : ' · tomada en la app'}{l.harvestSeal && i === 0 ? ' · cosechado hoy' : ''}</figcaption></figure>)}</div> : <p className="wnote">Sin fotos.</p>}
               <table className="wtable" style={{ marginTop: "10px" }}><tbody>
                 <tr><td>Precio sugerido hoy</td><td className="r"><b>{money(sug)} por kg</b></td></tr>
                 <tr><td>Diferencia</td><td className="r"><b>{diff >= 0 ? '+' : '−'}{pct(Math.abs(diff))}</b></td></tr>
                 <tr><td>Disponible · reservado · vendido</td><td className="r"><b>{numTrim(l.available)} · {numTrim(l.reserved)} · {numTrim(l.sold)} {l.unit === 'kg' ? 'kg' : UNIT_LABEL[l.unit].many}</b></td></tr>
+                {farm && <tr><td>Chacra</td><td className="r"><b>{farm.name} · {String(farm.areaHa).replace('.', ',')} ha · {placeLabel(farm.district)}</b>{farm.place && <div><button className="linkbtn" style={{ padding: 0, minHeight: 0 }} onClick={() => openExternal(mapsLink(farm.place!.lat, farm.place!.lng))}>{farm.place.label} · ver en Google Maps</button></div>}</td></tr>}
                 <tr><td>Publicada</td><td className="r"><b>{dateShort(l.createdAt)} · vence {Number.isFinite(l.expiresAt) ? dateShort(l.expiresAt) : '—'}</b></td></tr>
                 <tr><td>Otras publicaciones suyas</td><td className="r"><b>{prev}</b></td></tr>
-                {l.reviewReason && <tr><td>{l.status === 'IN_REVIEW' ? 'Regla' : 'Motivo'}</td><td className="r"><b>{l.reviewReason}</b></td></tr>}
+                {l.reviewReason && <tr><td>{l.status === 'PAUSED' ? 'Cambios pedidos' : 'Motivo'}</td><td className="r"><b>{l.reviewReason}</b></td></tr>}
               </tbody></table>
-              {flagged && <p className="wnote">{note}</p>}
             </div>
+            {l.review && (inReview || l.review.ai === 'LISTA') && <AutoReviewCard l={l} onUseMessage={setMsg} />}
             {l.status !== 'REMOVED' ? <div className="wcard">
-              <h2>Acción</h2>
-              <Inp area value={msg} onInput={setMsg} placeholder={flagged ? ask : 'Motivo (el agricultor lo lee): foto que no es del producto, precio engañoso, producto prohibido…'} label="Mensaje al agricultor" />
+              <h2>{inReview ? 'Tu decisión' : 'Acción'}</h2>
+              <Inp area value={msg} onInput={setMsg} placeholder={inReview ? 'Qué debe corregir (lo lee y lo escucha el agricultor): foto que no es del producto, precio por saco puesto por kilo…' : flagged ? ask : 'Motivo (el agricultor lo lee): foto que no es del producto, precio engañoso, producto prohibido…'} label="Mensaje al agricultor" />
               <div className="row g8 wrap" style={{ marginTop: "10px" }}>
-                {l.status !== 'ACTIVE' && l.status !== 'SOLD_OUT' && <Btn sm kind="dark" onClick={() => act('APPROVE')}>{l.status === 'IN_REVIEW' ? 'Aprobar' : 'Volver a mostrar'}</Btn>}
-                {flagged && l.status === 'ACTIVE' && <Btn sm kind="dark" onClick={() => act('APPROVE')}>Aprobar</Btn>}
-                {l.status !== 'PAUSED' && <Btn sm kind="sec" onClick={() => { if (!msg.trim()) setMsg(flagged ? `${ask} Corrígelo y vuelve a publicar.` : ''); else act('PAUSE'); }}>Pausar y pedir corrección</Btn>}
-                {l.status !== 'REJECTED' && <Btn sm kind="secd" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } act('REJECT'); }}>Ocultar</Btn>}
-                <Btn sm kind="danger" icon="trash-2" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } void act('REMOVE'); }}>Eliminar</Btn>
+                {inReview && <Btn sm kind="dark" icon="circle-check" onClick={() => act('APPROVE')}>Aprobar y publicar</Btn>}
+                {!inReview && l.status !== 'ACTIVE' && l.status !== 'SOLD_OUT' && <Btn sm kind="dark" onClick={() => act('APPROVE')}>Volver a mostrar</Btn>}
+                {!inReview && flagged && l.status === 'ACTIVE' && <Btn sm kind="dark" onClick={() => act('APPROVE')}>Aprobar</Btn>}
+                {l.status !== 'PAUSED' && <Btn sm kind="sec" onClick={() => { if (!msg.trim()) { if (l.review?.auto.farmerMessage) setMsg(l.review.auto.farmerMessage); else if (flagged) setMsg(`${ask} Corrígelo y vuelve a enviarla.`); else A.toast('Escribe qué debe corregir: el agricultor lo va a leer.', 'warn'); } else act('PAUSE'); }}>{inReview ? 'Pedir cambios' : 'Pausar y pedir corrección'}</Btn>}
+                {l.status !== 'REJECTED' && <Btn sm kind="secd" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } act('REJECT'); }}>{inReview ? 'Rechazar' : 'Ocultar'}</Btn>}
+                <Btn sm kind="danger" icon="trash" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } void act('REMOVE'); }}>Eliminar</Btn>
               </div>
-              <p className="wnote">Pausar: el agricultor la corrige y la reactiva. Ocultar: deja de verse y no la puede reactivar. Eliminar: además se borran sus fotos. En todos los casos sus pedidos en curso siguen. El mensaje le llega con audio y queda en auditoría.</p>
+              <p className="wnote">{inReview ? 'Aprobar: se publica y la ven los compradores. Pedir cambios: el agricultor la corrige y vuelve a esta cola. Rechazar: no se publica y no la puede reactivar. Eliminar: además se borran sus fotos.' : 'Pausar: el agricultor la corrige y la envía otra vez a revisión. Ocultar: deja de verse y no la puede reactivar. Eliminar: además se borran sus fotos.'} Los pedidos en curso siguen. El mensaje le llega con audio y queda en auditoría.</p>
             </div> : <div className="wcard"><p className="wnote" style={{ margin: 0 }}>Publicación eliminada{l.reviewReason ? `: ${l.reviewReason}` : ''}. No vuelve al catálogo.</p></div>}
           </div>
         )}

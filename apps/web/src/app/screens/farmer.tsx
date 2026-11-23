@@ -200,17 +200,36 @@ function ListingCard({ l }: { l: Listing }) {
         </div>
       </div>
       <div className="mt"><Prog v={progress} /></div>
-      {l.reviewReason && <div className={'cap mt ' + (l.status === 'REJECTED' ? 'bad' : 'warnc')}>{l.reviewReason}</div>}
+      {l.status === 'IN_REVIEW' && <ReviewSteps l={l} />}
+      {l.reviewReason && <div className={'cap mt ' + (l.status === 'REJECTED' ? 'bad' : 'warnc')}>{l.status === 'PAUSED' && l.review?.changesRequested ? 'El equipo te pide: ' : ''}{l.reviewReason}</div>}
       <div className="row between mt wrap">
         <b className="price bodym">{l.unit === 'kg' ? `${money(l.price)} por kg` : `${money(l.price)} por ${UNIT_LABEL[l.unit].one}`}</b>
         <div className="row g8">
-          {['ACTIVE', 'PAUSED', 'SOLD_OUT'].includes(l.status) && <Btn xs kind="sec" icon="pencil" onClick={() => A.sheet(<EditListing id={l.id} />)}>{l.photoIds.length ? 'Editar' : 'Editar y poner fotos'}</Btn>}
+          {['ACTIVE', 'PAUSED', 'SOLD_OUT', 'IN_REVIEW'].includes(l.status) && <Btn xs kind="sec" icon="pencil" onClick={() => A.sheet(<EditListing id={l.id} />)}>{l.photoIds.length ? 'Editar' : 'Editar y poner fotos'}</Btn>}
           {l.status === 'ACTIVE' && <Btn xs kind="sec" onClick={() => A.act('LISTING_PAUSE', { listingId: l.id }, { ok: 'Publicación pausada: no se ve en el catálogo.' })}>Pausar</Btn>}
-          {l.status === 'PAUSED' && <Btn xs kind="dark" onClick={() => A.act('LISTING_RESUME', { listingId: l.id }, { ok: 'Publicación activa otra vez.' })}>Activar</Btn>}
+          {l.status === 'PAUSED' && (l.review && (l.review.changesRequested || !l.review.approvedAt)
+            ? <Btn xs kind="dark" icon="send" onClick={() => A.act('LISTING_RESUME', { listingId: l.id }, { ok: 'La enviamos a revisión: te avisamos cuando se publique.' })}>Enviar a revisión</Btn>
+            : <Btn xs kind="dark" onClick={() => A.act('LISTING_RESUME', { listingId: l.id }, { ok: 'Publicación activa otra vez.' })}>Activar</Btn>)}
           {(l.status === 'EXPIRED' || l.status === 'REJECTED' || (l.status === 'SOLD_OUT' && !l.reserved)) && <Btn xs kind="dark" icon="repeat" onClick={() => { A.patch(d => { d.flow = { ...d.flow, pub: draftFrom(l) }; }); A.reset('A-10', { mode: 'form' }); }}>Publicar de nuevo</Btn>}
         </div>
       </div>
     </Card>
+  );
+}
+
+/** Dónde va la revisión: 1) automática (IA o reglas) · 2) equipo de Mesagri · 3) publicada. */
+function ReviewSteps({ l }: { l: Listing }) {
+  const r = l.review;
+  const autoDone = !!r && r.ai !== 'PENDIENTE';
+  const steps: [string, 'done' | 'now' | 'todo'][] = [
+    [r?.ai === 'LISTA' ? 'Revisión de la IA' : 'Revisión automática', autoDone ? 'done' : 'now'],
+    ['Revisión del equipo de Mesagri', autoDone ? 'now' : 'todo'],
+    ['Publicada en el catálogo', 'todo'],
+  ];
+  return (
+    <ol className="rvsteps mt" aria-label="Revisión de tu publicación">
+      {steps.map(([t, st]) => <li key={t} className={st}><Icon n={st === 'done' ? 'circle-check' : st === 'now' ? 'clock' : 'circle'} s="1.05em" />{t}{st === 'now' ? ' · ahora' : ''}</li>)}
+    </ol>
   );
 }
 
@@ -231,7 +250,10 @@ function EditListing({ id }: { id: string }) {
       if (ok) save(true);
       return;
     }
-    if (A.act('LISTING_EDIT', payload, { ok: 'Guardamos los cambios.' }).ok) A.sheet(null);
+    const r = A.act('LISTING_EDIT', payload, { quiet: true });
+    if (!r.ok) { A.toast(r.error!.message, 'err'); return; }
+    A.toast(r.result?.review ? 'Guardamos el cambio. Como cambiaste fotos o precio, se revisa antes de volver al catálogo.' : 'Guardamos los cambios.', r.result?.review ? 'info' : 'ok');
+    A.sheet(null);
   };
   const unit = l.unit === 'kg' ? 'kg' : UNIT_LABEL[l.unit].many;
   return (
@@ -432,7 +454,7 @@ function ConfirmPublish() {
     setBusy(false);
     if (!r.ok) return;
     A.patch(x => { x.flow = { ...x.flow, pub: undefined }; x.stack = [{ s: 'A-08' }, { s: 'A-09' }]; });
-    A.toast(r.result.status === 'IN_REVIEW' ? 'Tu publicación está en revisión: la cantidad es alta para tu chacra (RN-23).' : !A.dev.online ? 'Guardamos tu publicación: se envía sola cuando vuelva la señal.' : '¡Publicado! Ya lo ven los compradores.', r.result.status === 'IN_REVIEW' ? 'warn' : 'ok');
+    A.toast(!A.dev.online ? 'Guardamos tu publicación: se envía a revisión cuando vuelva la señal.' : 'Enviada a revisión: primero la revisa la IA de Mesagri y luego nuestro equipo. Te avisamos cuando ya la vean los compradores.', 'ok');
   };
   const edit = () => A.replace('A-10', { mode: 'form' });
   return (
@@ -461,7 +483,8 @@ function ConfirmPublish() {
         </div></Card>}
         {(d.notes ?? []).map((n, i) => <div key={i} className="cap">• {n}</div>)}
         {dev.ask && <Note icon="triangle-alert" tone="warn">Tu precio se aleja {Math.round(Math.abs(dev.dev) * 100)} % del sugerido ({money(suggestedPricePerKg(d.productId))} por kg). Te pediremos confirmarlo (RN-29).</Note>}
-        {pl && !pl.ok && <Note icon="triangle-alert" tone="warn">{fkg(totalKg)} pasa lo que rinden {String(farm!.areaHa).replace('.', ',')} ha de {p.name.toLowerCase()}: la publicación queda en revisión antes de verse (RN-23).</Note>}
+        {pl && !pl.ok && <Note icon="triangle-alert" tone="warn">{fkg(totalKg)} pasa lo que rinden {String(farm!.areaHa).replace('.', ',')} ha de {p.name.toLowerCase()}: el equipo lo va a revisar con cuidado (RN-23).</Note>}
+        <Note icon="scan-search">Antes de verse en el catálogo, tu publicación la revisa la IA de Mesagri (fotos, precio y cantidad) y después nuestro equipo. Te avisamos cuando se publique.</Note>
         <Card tone="warn"><div className="row top g8"><Icon n="percent" /><div className="bodym">{left > 0 ? <><b>Tus primeras {A.w.settings.commission.freeSales} ventas no pagan comisión.</b> Te quedan {left}. Después, solo {pct(A.w.settings.commission.rate)} de lo que vendas.</> : <>Pagas {pct(A.w.settings.commission.rate)} de cada venta conforme, una vez al mes. Si no vendes, no pagas.</>}</div></div></Card>
       </div>
     </Screen>

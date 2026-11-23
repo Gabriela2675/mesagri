@@ -27,3 +27,6 @@ export * from './patch';
 export { defaultPrefs, deletionCheck, TEXT_SCALES, tail, type DeletionCheck } from './engine/accounts';
 export { payProof, adminCancel } from './engine/orders';
 export { cleanCollect } from './engine/billing';
+export * from './places';
+export { placeData } from './places-data';
+export * from './review';

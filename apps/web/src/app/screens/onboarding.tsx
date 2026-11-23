@@ -8,7 +8,7 @@ import { reg, homeFor } from './registry';
 import { Logo } from '../ui/brand';
 import { useApp, type AppCtx } from '../ctx';
 import { Screen, Btn, Icon, Field, Inp, Sel, Tog, Card, Chip, ChipBtn, Steps, Spk, PhotoPick, Note, Seg, Kv, Av, Timeline, SheetBody, ICirc } from '../ui/kit';
-import { DISTRICTS, DISTRICT_BY_CODE, CITY_DISTRICTS, placeLabel, PROVINCES } from '@mesagri/shared/ubigeo';
+import { DISTRICTS, DISTRICT_BY_CODE, CITY_DISTRICTS, placeLabel, PROVINCES, districtChoices, kmBetween, type District } from '@mesagri/shared/ubigeo';
 import { isRucValid, isDniValid, isPhoneValid, LEVEL_NAME, buyerLimit, farmerLimit, maskDni } from '@mesagri/shared/rules';
 import { digitsFrom, uid } from '@mesagri/shared/ids';
 import { PERSONAS, TEST_RUCS } from '@mesagri/shared/seed';
@@ -18,6 +18,7 @@ import { liveSub } from '../helpers';
 import { auth, deviceAccounts } from '../net';
 import { openExternal, waitSmsCode } from '../platform';
 import { IdentityForm, identityProblem, confirmIdentity, idPayload, emptyId, type IdDraft } from './identity';
+import { PlacePicker, type PlaceValue } from '../ui/place';
 import { money, dateShort, hhmm } from '@mesagri/shared/format';
 import { DOW_CHIP } from '@mesagri/shared/time';
 import type { Role, VerifCase, Evidence, Org } from '@mesagri/shared/types';
@@ -540,29 +541,31 @@ function Consents() {
   );
 }
 
+/** Los 109 distritos de Arequipa para un selector («Yanque · Caylloma»), por provincia. */
+function districtOptions(filter?: (d: District) => boolean) { return districtChoices(filter); }
+
 /* ---------- A-05 · Tu identidad (agricultor) ---------- */
-function districtOptions(filter?: (d: typeof DISTRICTS[number]) => boolean) {
-  return DISTRICTS.filter(d => !filter || filter(d)).map(d => ({ v: d.code, l: `${d.name} · ${PROVINCES[d.province].name}` }));
-}
 function Identity() {
   const A = useApp();
   const R = regGet(A);
   const [d, setD] = useState<IdDraft>(() => R.id ?? emptyId(R.name ?? '', R.dni ?? ''));
-  const [district, setDistrict] = useState(R.district ?? '040519');
+  const [place, setPlace] = useState<PlaceValue>(() => ({ district: R.district ?? '', pin: R.place }));
+  const district = place.district;
   const [err, setErr] = useState('');
   const go = async (withDocs: boolean) => {
     const p = identityProblem(d, withDocs);
     if (p) { setErr(p); return; }
+    if (!district) { setErr('Busca dónde está tu chacra: escribe tu anexo, pueblo o distrito, o usa tu ubicación.'); return; }
     if (withDocs && !(await confirmIdentity(A, d))) return;
     const name = d.name.replace(/\s+/g, ' ').trim(), dni = d.dni;
     const userId = 'u-' + uid(), orgId = 'org-' + uid();
-    const r = A.act('USER_REGISTER', { userId, orgId, role: 'FARMER', phone: R.phone, name, dni, lang: A.dev.pre?.lang ?? 'es', org: { district, name } }, { as: userId });
+    const r = A.act('USER_REGISTER', { userId, orgId, role: 'FARMER', phone: R.phone, name, dni, lang: A.dev.pre?.lang ?? 'es', org: { district, name, location: place.pin } }, { as: userId });
     if (!r.ok) { setErr(r.error?.message ?? 'No pudimos crear tu cuenta.'); return; }
     A.act('CONSENTS_ACCEPT', { version: '1.0', items: R.consents ?? { distrito: true, dni: true } }, { as: userId, quiet: true });
     A.act('PREFS_SET', { prefs: { lang: A.dev.pre?.lang ?? 'es', audioGuide: A.dev.pre?.audioGuide ?? true, bilingual: !!A.dev.pre?.bilingual } }, { as: userId, quiet: true });
     // con las fotos, la identidad va a verificación (el servidor consulta el DNI y el equipo revisa)
     if (withDocs) A.act('VERIF_SUBMIT', { caseId: 'case-' + uid(), orgId, targetLevel: 1, identity: idPayload(d), evidence: [] }, { as: userId, quiet: true });
-    A.patch(x => { x.userId = userId; x.flow = { ...x.flow, reg: { ...(x.flow.reg ?? {}), name, dni, district, id: d, userId, orgId } }; x.stack = [{ s: 'A-06', p: { onboarding: 1 } }]; });
+    A.patch(x => { x.userId = userId; x.flow = { ...x.flow, reg: { ...(x.flow.reg ?? {}), name, dni, district, place: place.pin, id: d, userId, orgId } }; x.stack = [{ s: 'A-06', p: { onboarding: 1 } }]; });
   };
   return (
     <Screen title={A.t('identity.title', 'Verifica tu identidad')} sub={d.name || 'Paso 3 de 5'} foot={<>{err && <div className="errt" role="alert"><Icon n="circle-alert" s="1.2em" />{err}</div>}<Btn full onClick={() => { setErr(''); void go(true); }}>Continuar</Btn><button className="linkbtn" style={{ alignSelf: "center", fontSize: ".85em" }} onClick={() => { setErr(''); void go(false); }}>Puedes hacerlo después: mientras tanto explora la app</button></>}>
@@ -571,7 +574,8 @@ function Identity() {
         <div className="sect">Paso 3 de 5 · Tu identidad</div>
         {!LOCAL && <Note icon="info">Versión de prueba abierta al público: usa un DNI y fotos de ejemplo, no los tuyos.</Note>}
         <IdentityForm value={d} onChange={(v) => { setD(v); setErr(''); }} />
-        <Field label="¿En qué distrito está tu chacra?" help="Los compradores solo ven tu distrito (RN-17)."><Sel value={district} onChange={setDistrict} options={districtOptions(d => !d.city || d.code === '040101')} label="Distrito" /></Field>
+        <div className="sect">Tu chacra</div>
+        <PlacePicker value={place} onChange={(v) => { setPlace(v); setErr(''); regSet(A, { district: v.district, place: v.pin }); }} label="¿Dónde está tu chacra?" help="Escribe tu anexo, pueblo, sector o distrito y elige el que corresponde. Los compradores solo ven tu distrito (RN-17)." />
         <Note icon="lock">Lo vemos solo el equipo de verificación. Sirve para que los compradores confíen en ti.</Note>
       </div>
     </Screen>
@@ -635,7 +639,10 @@ function Zones() {
   const org = A.org!;
   const onboarding = !!A.top.p?.onboarding;
   const prov = org.province;
-  const near = DISTRICTS.filter(d => d.province === prov && !d.city);
+  // los distritos más cercanos a la chacra (de cualquier provincia), y los que ya tiene marcados
+  const [more, setMore] = useState(false);
+  const byKm = DISTRICTS.filter(d => !d.city && d.code !== org.district).map(d => ({ d, km: kmBetween(org.district, d.code) })).sort((a, b) => a.km - b.km);
+  const near = [DISTRICT_BY_CODE[org.district], ...byKm.filter((x, i) => i < (more ? 24 : 8) || org.serviceAreas.some(a => a.district === x.d.code)).map(x => x.d)].filter(d => d && !d.city);
   const city = CITY_DISTRICTS.filter(d => ['040101', '040126', '040103', '040112', '040129', '040104'].includes(d.code));
   const init: Record<string, number | undefined> = {};
   for (const a of org.serviceAreas) init[a.district] = a.fee;
@@ -672,8 +679,8 @@ function Zones() {
           <Tog on={pickup} onChange={setPickup} label="Recojo en mi chacra o punto de recojo" sub="El comprador o su transportista llega a recoger" />
           {pickup && <div className="mt"><Inp value={point} onInput={setPoint} placeholder="Punto de recojo" label="Punto de recojo" /></div>}
         </Card>
-        <div className="sect">Cerca de tu chacra · {PROVINCES[prov as 'AREQUIPA'].name}</div>
-        <Card>{near.map(d => row(d.code))}</Card>
+        <div className="sect">Cerca de tu chacra · {placeLabel(org.district)}</div>
+        <Card>{near.map(d => row(d.code))}{byKm.length > 8 && <button className="linkbtn" onClick={() => setMore(!more)}>{more ? 'Ver menos distritos' : 'Ver más distritos cercanos'}</button>}</Card>
         <div className="sect">Arequipa ciudad</div>
         <Card>{city.map(d => row(d.code))}</Card>
         <div className="lbl">Días en que entregas</div>

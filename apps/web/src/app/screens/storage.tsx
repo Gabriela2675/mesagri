@@ -14,7 +14,7 @@ import { money, moneyShort, kg as fkg, dateShort, hhmm, relDay, ago, pct, dateNu
 import { DAY, HOUR, startOfDay, periodOf, periodStart, nextPeriod, addBusinessDays, DOW_CHIP, lima, limaTime } from '@mesagri/shared/time';
 import { uid } from '@mesagri/shared/ids';
 import { orgName, userOfOrg, itemsShort, notifsFor, levelChip, PAY_LABEL } from '../helpers';
-import { DISTRICT_BY_CODE, placeLabel, districtName } from '@mesagri/shared/ubigeo';
+import { DISTRICT_BY_CODE, placeLabel, districtName, kmBetween } from '@mesagri/shared/ubigeo';
 import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
 import { RoleHead, RucLookup, regGet, regSet, districtOptions } from './onboarding';
@@ -25,12 +25,8 @@ import { canAskPermissions } from '../platform';
 import { accruedRent } from '@mesagri/shared/engine/billing';
 import type { Org, Lot, Booking, ReleaseOrder, Evidence, World } from '@mesagri/shared/types';
 
-const KM_PER_UNIT = 176 / Math.hypot(75 - 16, 63 - 82);
-export function kmBetween(a?: string, b?: string): number {
-  const pa = DISTRICT_BY_CODE[a ?? '']?.geo, pb = DISTRICT_BY_CODE[b ?? '']?.geo;
-  if (!pa || !pb) return 0;
-  return Math.round(Math.hypot(pa.x - pb.x, pa.y - pb.y) * KM_PER_UNIT);
-}
+/** Kilómetros por carretera, aproximados, entre dos distritos (coordenadas del INEI). */
+export { kmBetween };
 const TYPE_LABEL: Record<string, string> = { MOLINO: 'Molino', SECO: 'Almacén seco', ACOPIO: 'Centro de acopio' };
 const QL: Record<string, string> = { A: 'Calidad A', B: 'Calidad B', C: 'Calidad C' };
 const lossFarmPerMonth = (pid: string) => (product(pid).merma === 'TUBERCULO' ? 0.07 : 0.025);
@@ -384,7 +380,7 @@ function WhBusiness() {
         <div className="chips">{[['MOLINO', 'Molino'], ['SECO', 'Seco'], ['ACOPIO', 'Centro de acopio']].map(([v, l]) => <ChipBtn key={v} on={type === v} onClick={() => setType(v)}>{l}</ChipBtn>)}<span className="chip ghost" title="Mesagri no admite cadena de frío en esta etapa">Con frío · no por ahora</span></div>
         <div className="grid2">
           <Field label="Espacio para Mesagri"><Inp value={cap} onInput={setCap} mode="numeric" suffix="sacos" label="Espacio en sacos" /></Field>
-          <Field label="Ubicación"><Sel value={district} onChange={setDistrict} options={districtOptions(d => !d.city || d.code === '040101')} label="Distrito" /></Field>
+          <Field label="Ubicación"><Sel value={district} onChange={setDistrict} options={districtOptions()} label="Distrito" /></Field>
         </div>
         <div className="lbl">Productos que recibes</div>
         <div className="chips">{storable().map(p => <ChipBtn key={p.id} on={prods.includes(p.id)} onClick={() => setProds(prods.includes(p.id) ? prods.filter(x => x !== p.id) : [...prods, p.id])}>{p.short}</ChipBtn>)}</div>

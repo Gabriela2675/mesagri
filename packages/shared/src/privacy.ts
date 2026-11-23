@@ -18,7 +18,7 @@
  * «Ver cuentas de prueba». Ninguna entidad se quita del mundo, solo se ocultan campos: así los
  * totales y calificaciones que calcula cada celular salen iguales para todos.
  */
-import type { World, User, Org, SubOrder, VerifCase, Dispute, Complaint, Ticket, PurchaseRequest, Schedule, Booking, Notif, AuditEntry, ReleaseOrder, Statement, SubInvoice } from './types';
+import type { World, User, Org, SubOrder, VerifCase, Dispute, Complaint, Ticket, PurchaseRequest, Schedule, Booking, Notif, AuditEntry, ReleaseOrder, Statement, SubInvoice, Farm, Listing } from './types';
 import { seedWorld } from './engine/index';
 import { sealCode, CODE_SALT } from './ids';
 import { maskPhone } from './rules';
@@ -137,12 +137,18 @@ export const MASKS: Record<string, Masker> = {
     return m;
   },
   orgs: (o: Org, id, x) => {
-    if (isAdmin(x) || !realOrg(x, id) || near(x, id)) return o;
-    const m = without(o, 'dni', 'address', 'receiver');
+    if (isAdmin(x) || !realOrg(x, id) || own(x, id)) return o;
+    // el punto exacto de la chacra no lo ve nadie más, ni quien compra (RN-17)
+    if (near(x, id)) return o.location ? without(o, 'location') : o;
+    const m = without(o, 'dni', 'address', 'receiver', 'location');
     m.payout = (o.payout ?? []).map(p => without({ ...p, number: maskNum(p.number), holder: initials(p.holder) }, 'authorization'));
     if (o.locales) m.locales = o.locales.map(l => ({ ...l, address: '', receiver: '' }));
     return m;
   },
+  /** publicaciones: la revisión interna (reglas, IA y mensajes del equipo) solo la ven el agricultor y el equipo */
+  listings: (l: Listing, _id, x) => (isAdmin(x) || !realOrg(x, l.orgId) || own(x, l.orgId) || (!l.review && !l.flags && l.reviewReason === undefined) ? l : without(l, 'review', 'flags', 'reviewReason')),
+  /** chacras: el punto exacto y la referencia solo los ven el agricultor y el equipo (RN-17) */
+  farms: (f: Farm, _id, x) => (isAdmin(x) || !realOrg(x, f.orgId) || own(x, f.orgId) || !f.place ? f : without(f, 'place')),
   cases: (c: VerifCase, _id, x) => {
     if (isAdmin(x) || !realOrg(x, c.orgId)) return c;
     // la persona ve su expediente, pero no el nombre oficial que devolvió la consulta del DNI (así nadie

@@ -7,6 +7,14 @@ import { DISTRICTS, PROVINCES, PRODUCTS, UNIT_LABEL, CATEGORY_LABEL, QU_PRODUCT_
 import type { Conn } from '../db';
 import { exec, insertMany, js } from '../db';
 
+/** Los 109 distritos de Arequipa: se insertan o se actualizan (al arrancar, así una base antigua recibe los nuevos). */
+export async function syncUbigeo(c: Conn) {
+  const cols = ['code', 'department', 'province_code', 'province', 'district', 'capital', 'latitude', 'longitude', 'altitude_m', 'is_city', 'map_x', 'map_y'];
+  const vals = DISTRICTS.map(d => [d.code, 'Arequipa', d.province, PROVINCES[d.province].name, d.name, d.capital, d.lat, d.lng, d.alt, !!d.city, d.geo.x, d.geo.y]);
+  const upd = cols.filter(k => k !== 'code').map(k => `\`${k}\` = nw.\`${k}\``).join(', ');
+  await exec(c, `INSERT INTO ubigeo (${cols.map(k => `\`${k}\``).join(', ')}) VALUES ${vals.map(() => `(${cols.map(() => '?').join(', ')})`).join(', ')} AS nw ON DUPLICATE KEY UPDATE ${upd}`, vals.flat());
+}
+
 export const ROLES = [
   { id: 1, code: 'FARMER', label: 'Agricultor' },
   { id: 2, code: 'BUYER', label: 'Comprador MYPE' },
@@ -18,10 +26,7 @@ export const ROLES = [
 const perish = (days: number) => (days <= 12 ? 'ALTA' : days <= 60 ? 'MEDIA' : 'BAJA');
 
 export async function writeReference(c: Conn) {
-  await insertMany(c, 'ubigeo', DISTRICTS.map(d => ({
-    code: d.code, department: 'Arequipa', province_code: d.province, province: PROVINCES[d.province].name, district: d.name,
-    is_city: !!d.city, map_x: d.geo.x, map_y: d.geo.y,
-  })));
+  await syncUbigeo(c);
   await insertMany(c, 'roles', ROLES);
   await insertMany(c, 'units', Object.entries(UNIT_LABEL).map(([code, u]) => ({ code, label_one: u.one, label_many: u.many, short_label: u.short })));
   const cats = Object.entries(CATEGORY_LABEL).map(([code, name], i) => ({ id: i + 1, code, name }));

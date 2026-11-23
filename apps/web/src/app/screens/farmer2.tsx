@@ -18,7 +18,7 @@ import { carrierStats } from '@mesagri/shared/queries';
 import { r2 } from '@mesagri/shared/rules';
 import { docPdf } from '../pdf';
 import { saveFile, SAVE_UNAVAILABLE } from '../platform';
-import { districtOptions } from './onboarding';
+import { PlacePicker, type PlaceValue } from '../ui/place';
 import { textSizeLabel, PrefsSheet, PrivacySheet, NameSheet, PermsSheet } from './common';
 import { canAskPermissions } from '../platform';
 import type { Statement } from '@mesagri/shared/types';
@@ -30,15 +30,18 @@ function Farms() {
   const A = useApp();
   const farms = Object.values(A.w.farms).filter(f => f.orgId === A.org!.id);
   const [adding, setAdding] = useState(farms.length === 0);
+  const [locating, setLocating] = useState<string>();
+  const loc = locating ? A.w.farms[locating] : undefined;
   return (
-    <Screen title={adding ? 'Agregar chacra' : 'Mis chacras'} sub={`${farms.length} ${farms.length === 1 ? 'registrada' : 'registradas'}`}>
-      {adding ? <AddFarm onDone={() => setAdding(false)} /> : (
+    <Screen title={adding ? 'Agregar chacra' : loc ? 'Dónde está la chacra' : 'Mis chacras'} sub={loc ? loc.name : `${farms.length} ${farms.length === 1 ? 'registrada' : 'registradas'}`}>
+      {adding ? <AddFarm onDone={() => setAdding(false)} /> : loc ? <LocateFarm farmId={loc.id} onDone={() => setLocating(undefined)} /> : (
         <div className="stack">
           {farms.map(f => (
             <Card key={f.id}>
-              <div className="row between"><b className="h3">{f.name}</b><Chip tone={f.gps === 'APP' ? 'leaf' : 'warn'} icon="map-pin">{f.gps === 'APP' ? 'GPS de la app' : 'Ubicación manual'}</Chip></div>
-              <div className="cap">{placeLabel(f.district)} · {String(f.areaHa).replace('.', ',')} ha · {f.tenure === 'PROPIA' ? 'propia' : f.tenure === 'COMUNAL' ? 'comunal' : 'alquilada'}</div>
+              <div className="row between"><b className="h3">{f.name}</b><Chip tone={f.place ? 'leaf' : 'warn'} icon={f.place ? 'map-pin-check' : 'map-pin'}>{f.place ? (f.place.source === 'GPS' ? 'GPS del celular' : f.place.source === 'CCPP' ? 'Lugar del INEI' : f.place.source === 'BUSCADOR' ? 'Dirección' : 'Solo el distrito') : 'Sin ubicación'}</Chip></div>
+              <div className="cap">{f.place && f.place.source !== 'DISTRITO' ? `${f.place.label} · ` : ''}{placeLabel(f.district)} · {String(f.areaHa).replace('.', ',')} ha · {f.tenure === 'PROPIA' ? 'propia' : f.tenure === 'COMUNAL' ? 'comunal' : 'alquilada'}</div>
               <div className="chips mt">{f.crops.map(c => <Chip key={c}>{product(c).short}</Chip>)}</div>
+              <div className="mt"><button className="linkbtn" onClick={() => setLocating(f.id)}><Icon n="map-pin" s="1em" /> {f.place && f.place.source !== 'DISTRITO' ? 'Corregir la ubicación' : 'Marcar dónde está'}</button></div>
             </Card>
           ))}
           <Btn full kind="sec" icon="plus" onClick={() => setAdding(true)}>Agregar chacra</Btn>
@@ -49,47 +52,48 @@ function Farms() {
   );
 }
 
-function AddFarm({ onDone }: { onDone: () => void }) {
+function LocateFarm({ farmId, onDone }: { farmId: string; onDone: () => void }) {
   const A = useApp();
-  const [name, setName] = useState('');
-  const [district, setDistrict] = useState(A.org!.district);
-  const [area, setArea] = useState('');
-  const [tenure, setTenure] = useState<'PROPIA' | 'COMUNAL' | 'ALQUILADA'>('PROPIA');
-  const [crops, setCrops] = useState<string[]>([]);
-  const [photos, setPhotos] = useState<(string | undefined)[]>([undefined, undefined, undefined]);
-  const [gps, setGps] = useState(false);
+  const f = A.w.farms[farmId];
+  const [place, setPlace] = useState<PlaceValue>({ district: f.district, pin: f.place });
   const save = () => {
-    const r = A.act('FARM_ADD', { farmId: 'farm-' + uid(), orgId: A.org!.id, name, district, areaHa: Number(area.replace(',', '.')), tenure, crops, gps: gps ? 'APP' : 'MANUAL', photoIds: photos.filter(Boolean) }, { ok: 'Guardamos tu chacra.' });
+    if (!place.pin) { A.toast('Busca el lugar de tu chacra o usa tu ubicación.', 'warn'); return; }
+    const r = A.act('FARM_LOCATE', { farmId, district: place.district, place: place.pin }, { ok: 'Guardamos dónde está tu chacra.' });
     if (r.ok) onDone();
   };
   return (
     <div className="stack">
-      <div className="sect">Toma las fotos y el GPS en la misma chacra</div>
-      <div className="map" style={{ padding: "0" }}>
-        <svg viewBox="0 0 300 120" role="img" aria-label="Ubicación de la chacra (esquema)"><rect width="300" height="120" fill="#E3ECD8" /><path d="M0 92 C 60 70, 120 110, 180 84 S 270 72, 300 86" stroke="#97BC62" strokeWidth="10" fill="none" opacity=".7" /><path d="M95 30 L170 24 L190 66 L150 92 L100 76 Z" fill="#E8D7B2" stroke="#A66633" strokeWidth="2" strokeDasharray="5 4" /><circle cx="145" cy="56" r="9" fill="#A66633" /><circle cx="145" cy="56" r="3.5" fill="#fff" /></svg>
-        <button className="chip line" style={{ position: "absolute", right: ".6em", bottom: ".6em" }} onClick={() => {
-          // GPS del celular: necesita permiso y conexión segura (https o la misma laptop); si no, queda la ubicación del distrito
-          const done = (msg: string, tone: 'ok' | 'info' = 'ok') => { setGps(true); A.toast(msg, tone); };
-          try {
-            if (!navigator.geolocation || !(window as any).isSecureContext) { done(`Marcamos el centro de ${districtName(district)}: el GPS se usa al abrir la app con conexión segura.`, 'info'); return; }
-            navigator.geolocation.getCurrentPosition(
-              (pos) => done(`Ubicación marcada con el GPS (±${Math.round(pos.coords.accuracy)} m). Los compradores solo ven tu distrito.`),
-              () => done(`No tenemos permiso para el GPS: marcamos el centro de ${districtName(district)}.`, 'info'),
-              { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 },
-            );
-          } catch { done(`Marcamos el centro de ${districtName(district)}.`, 'info'); }
-        }}><Icon n="map-pin" s="1.1em" />{gps ? 'GPS marcado' : 'Marcar con GPS'}</button>
-      </div>
+      <PlacePicker value={place} onChange={setPlace} label={`¿Dónde está ${f.name}?`} />
+      <Btn full onClick={save} disabled={!place.pin}>Guardar ubicación</Btn>
+      <Btn full kind="ghost" onClick={onDone}>Volver</Btn>
+    </div>
+  );
+}
+
+function AddFarm({ onDone }: { onDone: () => void }) {
+  const A = useApp();
+  const [name, setName] = useState('');
+  const [place, setPlace] = useState<PlaceValue>(() => (A.org!.location ? { district: A.org!.district, pin: A.org!.location } : { district: '' }));
+  const [area, setArea] = useState('');
+  const [tenure, setTenure] = useState<'PROPIA' | 'COMUNAL' | 'ALQUILADA'>('PROPIA');
+  const [crops, setCrops] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<(string | undefined)[]>([undefined, undefined, undefined]);
+  const save = () => {
+    if (!place.district) { A.toast('Busca dónde está la chacra: tu anexo, pueblo o distrito.', 'warn'); return; }
+    const r = A.act('FARM_ADD', { farmId: 'farm-' + uid(), orgId: A.org!.id, name, district: place.district, place: place.pin, areaHa: Number(area.replace(',', '.')), tenure, crops, gps: place.pin?.source === 'GPS' ? 'APP' : 'MANUAL', photoIds: photos.filter(Boolean) }, { ok: 'Guardamos tu chacra.' });
+    if (r.ok) onDone();
+  };
+  return (
+    <div className="stack">
       <Field label="Nombre de la chacra"><Inp value={name} onInput={setName} placeholder="Pampa Alta" label="Nombre de la chacra" /></Field>
-      <div className="grid2">
-        <Field label="Distrito"><Sel value={district} onChange={setDistrict} options={districtOptions(d => !d.city || d.code === '040101')} label="Distrito" /></Field>
-        <Field label="Área"><Inp value={area} onInput={setArea} mode="decimal" suffix="ha" placeholder="1,5" label="Área en hectáreas" /></Field>
-      </div>
+      <PlacePicker value={place} onChange={setPlace} label="¿Dónde está la chacra?" />
+      <Field label="Área"><Inp value={area} onInput={setArea} mode="decimal" suffix="ha" placeholder="1,5" label="Área en hectáreas" /></Field>
       <div className="lbl">Tenencia</div>
       <Seg value={tenure} onChange={setTenure} options={[{ v: 'PROPIA', l: 'Propia' }, { v: 'COMUNAL', l: 'Comunal' }, { v: 'ALQUILADA', l: 'Alquilada' }]} />
       <div className="lbl">Qué siembras</div>
       <div className="chips">{allProducts().slice(0, 18).map(p => <ChipBtn key={p.id} on={crops.includes(p.id)} onClick={() => setCrops(crops.includes(p.id) ? crops.filter(c => c !== p.id) : [...crops, p.id])}>{p.short}</ChipBtn>)}</div>
-      <div className="photos">{photos.map((ph, i) => <PhotoPick key={i} value={ph} onChange={(v) => { const n = [...photos]; n[i] = v; setPhotos(n); if (v) setGps(true); }} label={`Chacra · foto ${i + 1}`} kind="chacra" sample={{ stamp: `GPS dentro del área · ${hhmm(A.now)}` }} />)}</div>
+      <div className="sect">Fotos de la chacra</div>
+      <div className="photos">{photos.map((ph, i) => <PhotoPick key={i} value={ph} onChange={(v) => { const n = [...photos]; n[i] = v; setPhotos(n); }} label={`Chacra · foto ${i + 1}`} kind="chacra" sample={{ stamp: `${place.pin ? place.pin.label + ' · ' : ''}${hhmm(A.now)}` }} />)}</div>
       <Note icon="lock">Los compradores solo ven tu distrito, nunca la ubicación exacta (RN-17).</Note>
       <Btn full onClick={save}>Guardar chacra</Btn>
     </div>

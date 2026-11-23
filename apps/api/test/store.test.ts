@@ -122,11 +122,13 @@ describe('Mundo ↔ MySQL', () => {
     await ok('u-hector', 'SUBORDER_DELIVER', { subOrderId: 'so-rt-6', code: w.subOrders['so-rt-6'].deliveryCode, cashCollected: true });
     await ok('u-elena', 'RECEIPT_CONFIRM', { subOrderId: 'so-rt-6', lines: [{ listingId: 'l-h-cebolla', acceptedQty: 100, quality: 'OK' }] });
     // un usuario nuevo, su cobro, zonas y chacra
-    await ok('u-rt-farmer', 'USER_REGISTER', { userId: 'u-rt-farmer', orgId: 'org-rt-farmer', role: 'FARMER', phone: '987650001', name: 'Prueba Ida Vuelta', dni: '41234567', org: { district: '040519' } }, MIN);
+    await ok('u-rt-farmer', 'USER_REGISTER', { userId: 'u-rt-farmer', orgId: 'org-rt-farmer', role: 'FARMER', phone: '987650001', name: 'Prueba Ida Vuelta', dni: '41234567', org: { district: '040519', location: { lat: -15.64833, lng: -71.66083, label: 'Yanque', source: 'CCPP', ccpp: '0405190001', ref: 'Al lado del puente colgante' } } }, MIN);
     await ok('u-rt-farmer', 'CONSENTS_ACCEPT', { version: '1.0', items: { distrito: true, dni: true, whatsapp: true } });
     await ok('u-rt-farmer', 'PAYOUT_SET', { orgId: 'org-rt-farmer', accounts: [{ id: 'pa-rt', kind: 'YAPE', number: '987650001', holder: 'Prueba Ida Vuelta', relation: 'PROPIA' }], acceptsCash: true });
     await ok('u-rt-farmer', 'ZONES_SET', { orgId: 'org-rt-farmer', areas: [{ district: '040519', fee: 0 }, { district: '040101', fee: 15 }], days: [2, 5] });
     await ok('u-rt-farmer', 'FARM_ADD', { farmId: 'farm-rt', orgId: 'org-rt-farmer', name: 'Chacra de prueba', district: '040519', areaHa: 1.5, tenure: 'COMUNAL', crops: ['papa_nativa'] });
+    await ok('u-rt-farmer', 'FARM_ADD', { farmId: 'farm-rt2', orgId: 'org-rt-farmer', name: 'Chacra en Majes', district: '040520', areaHa: 3, tenure: 'ALQUILADA', crops: ['cebolla_roja'], place: { lat: -16.33602, lng: -72.25757, label: 'Sección B2 (Pampa de Majes)', source: 'CCPP', ccpp: '0405200014' } });
+    await ok('u-rt-farmer', 'FARM_LOCATE', { farmId: 'farm-rt', district: '040519', place: { lat: -15.6502, lng: -71.6655, label: 'A 600 m de Yanque', source: 'GPS', accuracy: 8, ref: 'Andenes de la parte baja' } });
     await ok('u-rt-farmer', 'PREFS_SET', { prefs: { lang: 'qu', textScale: 1.25 } });
     // almacén: responder una reserva y recibir el lote
     await ok('u-ernesto', 'STO_BOOK_RESPOND', { bookingId: 'bk-p2', accept: true });

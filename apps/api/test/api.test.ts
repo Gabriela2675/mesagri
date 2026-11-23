@@ -627,6 +627,108 @@ describe('API de Mesagri', () => {
     });
   });
 
+  it('lugares: el buscador de direcciones solo devuelve lugares de Arequipa con su distrito, y el punto del GPS dice su distrito', async () => {
+    const req = createRequire(path.resolve(process.cwd(), 'package.json'));
+    const geo = app.get(req('./dist/places/geocoder.js').Geocoder) as import('../src/places/geocoder').Geocoder;
+    const asked: string[] = [];
+    const feature = (name: string, lng: number, lat: number, extra: any = {}) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: { name, ...extra } });
+    geo.fetcher = (async (url: any) => {
+      asked.push(String(url));
+      const u = new URL(String(url));
+      if (u.pathname === '/reverse') return new Response(JSON.stringify({ features: [feature('Calle Grau', -71.661, -15.649, { city: 'Yanque' })] }), { status: 200 });
+      if (u.searchParams.get('q') === 'sin servicio') return new Response('caído', { status: 503 });
+      return new Response(JSON.stringify({ features: [
+        feature('Mercado de Yanque', -71.6605, -15.6485, { city: 'Yanque', county: 'Caylloma' }),
+        feature('Plaza de Armas', -71.5369, -16.3988, { city: 'Arequipa' }),
+        feature('Plaza de Armas del Cusco', -71.9787, -13.5167, { city: 'Cusco' }),
+      ] }), { status: 200 });
+    }) as any;
+    const info = await api().get('/api/v1/places/info');
+    expect(info.body.provider).toBe('photon');
+    const r = await api().get('/api/v1/places/search').query({ q: 'plaza de armas' });
+    expect(r.status).toBe(200);
+    expect(r.body.provider).toBe('photon');
+    expect(r.body.attribution).toBe('© OpenStreetMap');
+    // el de Cusco no sale; cada uno con su distrito
+    expect(r.body.results.map((h: any) => [h.label, h.district])).toEqual([['Mercado de Yanque', '040519'], ['Plaza de Armas', '040101']]);
+    expect(asked[0]).toContain('bbox=-75.1%2C-17.35%2C-70.6%2C-14.6');
+    // la misma búsqueda sale de la memoria (no vuelve a preguntar)
+    await api().get('/api/v1/places/search').query({ q: 'Plaza de Armas' });
+    expect(asked.filter(a => a.includes('/api/')).length).toBe(1);
+    // si el servicio no responde, la app sigue con el buscador del INEI
+    const down = await api().get('/api/v1/places/search').query({ q: 'sin servicio' });
+    expect(down.body).toMatchObject({ results: [], error: 'UNAVAILABLE' });
+    const short = await api().get('/api/v1/places/search').query({ q: 'ya' });
+    expect(short.body.results).toEqual([]);
+    const rev = await api().get('/api/v1/places/reverse').query({ lat: -15.6483, lng: -71.6608 });
+    expect(rev.body).toMatchObject({ inside: true, district: '040519' });
+    expect(rev.body.near[0].name).toBeTruthy();
+    expect(rev.body.address).toMatchObject({ label: 'Calle Grau', lat: -15.6483, lng: -71.6608 });
+    const out = await api().get('/api/v1/places/reverse').query({ lat: -13.52, lng: -71.97 });
+    expect(out.body).toMatchObject({ inside: false, district: null, address: null });
+    expect((await api().get('/api/v1/places/reverse').query({ lat: 'x', lng: 2 })).status).toBe(422);
+  });
+
+  it('revisión con IA: mira las fotos con Claude, anota el resultado y el equipo decide; sin respuesta queda la de reglas', async () => {
+    const req = createRequire(path.resolve(process.cwd(), 'package.json'));
+    const { CONFIG } = req('./dist/config.js') as typeof import('../src/config');
+    const ai = app.get(req('./dist/review/ai-review.js').AiListingReview) as import('../src/review/ai-review').AiListingReview;
+    const engine = app.get(req('./dist/core/engine.service.js').EngineService) as import('../src/core/engine.service').EngineService;
+    const { rows } = req('./dist/db/db.js') as typeof import('../src/db/db');
+    CONFIG.aiReview.key = 'clave-de-prueba';
+    ai.retryMs = 50;
+    const calls: any[] = [];
+    let reply: () => Response = () => new Response(JSON.stringify({
+      content: [{ type: 'tool_use', id: 'tu_1', name: 'registrar_revision', input: {
+        veredicto: 'OBSERVAR', puntaje: 64, precio: 'Está dentro de lo normal.', cantidad: 'Creíble para 1,5 ha.', resumen: 'La foto muestra papas, pero está muy oscura.',
+        mensaje_agricultor: 'Toma otra foto con más luz.', fotos: [{ numero: 1, muestra_el_producto: true, que_se_ve: 'Papas amarillas en un saco', foto_real_de_cosecha: true, calidad: 'MALA', problemas: ['oscura'] }],
+      } }],
+      usage: { input_tokens: 1820, output_tokens: 240 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    ai.fetcher = (async (url: any, init: any) => { calls.push({ url: String(url), init }); return reply(); }) as any;
+    const wilber = await session('u-wilber');
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    expect((await api().post('/api/v1/files').set('Authorization', 'Bearer ' + wilber).send({ id: 'ph-cam-ia-1', dataUrl: png })).status).toBe(201);
+    const pub = { id: 'e-api-ia-1', type: 'LISTING_PUBLISH', p: { orgId: 'org-wilber', listingId: 'l-api-ia', productId: 'papa_amarilla', unit: 'kg', unitKg: 1, qty: 80, price: 2.7, harvestDate: engine.simNow(), farmId: 'farm-wilber', photoIds: ['ph-cam-ia-1'] } };
+    const r = await api().post('/api/v1/sync/events').set('Authorization', 'Bearer ' + wilber).send({ events: [pub] });
+    expect(r.body.results[0].ok).toBe(true);
+    // espera a que la IA responda
+    for (let i = 0; i < 60 && engine.world.listings['l-api-ia'].review?.ai !== 'LISTA'; i++) await new Promise(res => setTimeout(res, 100));
+    const l = engine.world.listings['l-api-ia'];
+    expect(l.status).toBe('IN_REVIEW');
+    expect(l.review).toMatchObject({ ai: 'LISTA', auto: { by: 'IA', model: 'claude-haiku-5-5', verdict: 'OBSERVAR', score: 64, farmerMessage: 'Toma otra foto con más luz.' } });
+    expect(l.review!.auto.checks.find(c => c.key === 'foto1')).toMatchObject({ ok: null });
+    // así se llamó a Claude: clave, versión, la foto en base64 y la herramienta obligatoria
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://api.anthropic.com/v1/messages');
+    expect(calls[0].init.headers).toMatchObject({ 'x-api-key': 'clave-de-prueba', 'anthropic-version': '2023-06-01' });
+    const body = JSON.parse(calls[0].init.body);
+    expect(body).toMatchObject({ model: 'claude-haiku-5-5', tool_choice: { type: 'tool', name: 'registrar_revision' } });
+    expect(body.messages[0].content[0]).toMatchObject({ type: 'image', source: { type: 'base64', media_type: 'image/png' } });
+    expect(body.messages[0].content[1].text).toContain('Papa amarilla');
+    expect(body.messages[0].content[1].text).toContain('tomada con la cámara de la app');
+    const log = await rows(engine.pool, 'SELECT model, verdict, score, photos, input_tokens, output_tokens, error FROM ai_reviews WHERE listing_uuid = ?', ['l-api-ia']);
+    expect(log).toEqual([{ model: 'claude-haiku-5-5', verdict: 'OBSERVAR', score: 64, photos: 1, input_tokens: 1820, output_tokens: 240, error: null }]);
+    // el panel ve si la IA está activa
+    const majo = await session('u-majo');
+    const info = await api().get('/api/v1/review/info').set('Authorization', 'Bearer ' + majo);
+    expect(info.body).toMatchObject({ ai: true, model: 'claude-haiku-5-5', today: 1 });
+    expect((await api().get('/api/v1/review/info').set('Authorization', 'Bearer ' + wilber)).status).toBe(403);
+    // el equipo la aprueba: recién se publica
+    const ok = await api().post('/api/v1/sync/events').set('Authorization', 'Bearer ' + majo).send({ events: [{ id: 'e-api-ia-2', type: 'LISTING_MODERATE', p: { listingId: 'l-api-ia', decision: 'APPROVE' } }] });
+    expect(ok.body.results[0].ok).toBe(true);
+    expect(engine.world.listings['l-api-ia'].status).toBe('ACTIVE');
+    // la IA no responde: después de reintentar queda la revisión por reglas, con la nota
+    reply = () => new Response(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }), { status: 529 });
+    const pub2 = { ...pub, id: 'e-api-ia-3', p: { ...pub.p, listingId: 'l-api-ia2', photoIds: ['ph-cam-ia-1'] } };
+    expect((await api().post('/api/v1/sync/events').set('Authorization', 'Bearer ' + wilber).send({ events: [pub2] })).body.results[0].ok).toBe(true);
+    for (let i = 0; i < 80 && engine.world.listings['l-api-ia2'].review?.ai !== 'ERROR'; i++) await new Promise(res => setTimeout(res, 100));
+    expect(engine.world.listings['l-api-ia2'].review).toMatchObject({ ai: 'ERROR', auto: { by: 'REGLAS' } });
+    expect(engine.world.listings['l-api-ia2'].review!.aiNote).toContain('overloaded_error');
+    expect(calls.length).toBe(4); // la primera + 2 reintentos
+    CONFIG.aiReview.key = '';
+  });
+
   it('política de privacidad publicada (la pide Meta)', async () => {
     const r = await api().get('/privacidad');
     expect(r.status).toBe(200);

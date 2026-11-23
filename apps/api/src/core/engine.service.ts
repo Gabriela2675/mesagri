@@ -19,7 +19,7 @@ import { CONFIG } from '../config';
 import { createPool, exec, rows, tx, upsert, js } from '../db/db';
 import { migrate } from '../db/migrate';
 import { Persistence } from '../db/store/persistence';
-import { writeReference } from '../db/store/reference';
+import { writeReference, syncUbigeo } from '../db/store/reference';
 import { DomainHttpError } from '../common/errors';
 
 /** Acción aceptada: su número, el evento, lo que devolvió y qué entidades cambiaron (para mandar a cada perfil lo suyo). */
@@ -38,7 +38,7 @@ export interface ApplyInput {
 }
 
 /** Acciones que solo puede hacer el servidor. */
-export const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK', 'VERIF_IDCHECK']);
+export const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK', 'VERIF_IDCHECK', 'LISTING_AI_REVIEW']);
 
 const rand4 = () => String(crypto.randomInt(0, 10000)).padStart(4, '0');
 const ALNUM = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -91,6 +91,9 @@ export class EngineService implements OnModuleInit, OnApplicationShutdown {
     if (!Number(ref[0].n)) {
       await tx(this.pool, c => writeReference(c));
       this.log.log('Catálogo, ubigeo y precios de referencia cargados');
+    } else {
+      // distritos nuevos o corregidos (0013: de 22 a los 109 distritos de Arequipa)
+      await tx(this.pool, c => syncUbigeo(c));
     }
     this.store = new Persistence(this.pool);
     await this.store.init();

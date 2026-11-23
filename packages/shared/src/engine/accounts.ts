@@ -1,14 +1,14 @@
 /*
  * Cuentas, verificación por niveles y perfiles (6.1, 6.2, 10, RN-01, RN-02, RN-16, RN-18, RN-19, RN-28).
  */
-import type { Org, User, Evidence, VerifCase, PayoutAccount, Prefs, CaseIdentity, FaceShot, FacePose, RegistryCheck, DocReview, World, SubOrder } from '../types';
+import type { Org, User, Evidence, VerifCase, PayoutAccount, Prefs, CaseIdentity, FaceShot, FacePose, RegistryCheck, DocReview, World, SubOrder, PlacePin, PlaceSource } from '../types';
 import { on, fail, audit, notify, requireMember, requireAdmin, getOrg, must, Ctx } from './core';
 import { adminCancel } from './orders';
 import { codeFrom } from '../ids';
 import { money } from '../format';
 import { isRucValid, isDniValid, isPhoneValid, initials, licenseMatches, VCLASS_INFO } from '../rules';
 import { identityAlerts, identityEvidence, isIdentityAlert, IDENTITY_KEYS, faceMatchLevel, ID_ALERTS } from '../identity';
-import { DISTRICT_BY_CODE } from '../ubigeo';
+import { DISTRICT_BY_CODE, AREQUIPA_BOX, inBox, validLatLng } from '../ubigeo';
 import { addMonths } from '../time';
 import { PRODUCT_BY_ID } from '../catalog';
 import type { DocItem, CarrierRoute, StorageRate } from '../types';
@@ -20,6 +20,33 @@ export function defaultPrefs(lang: Prefs['lang'] = 'es'): Prefs {
 }
 
 /* ---------- Limpieza de lo que llega del celular (solo campos conocidos, tipos correctos) ---------- */
+
+const PLACE_SOURCES: PlaceSource[] = ['CCPP', 'DISTRITO', 'GPS', 'BUSCADOR'];
+/**
+ * Ubicación de una chacra: dentro de Arequipa y dentro del distrito elegido (con un margen de ~2 km,
+ * porque los límites oficiales son aproximados). El centro poblado elegido debe ser de ese distrito.
+ */
+export function cleanPin(raw: unknown, district: string, t: number): PlacePin | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const p = raw as any;
+  const lat = Number(p.lat), lng = Number(p.lng);
+  const d = DISTRICT_BY_CODE[district];
+  if (!d) fail('BAD_DISTRICT', 'Elige el distrito de la chacra.');
+  if (!validLatLng(lat, lng) || !inBox(lat, lng, AREQUIPA_BOX)) fail('BAD_LOCATION', 'Ese punto no está en la región Arequipa. Busca otra vez el lugar de tu chacra.');
+  if (!inBox(lat, lng, d.box)) fail('BAD_LOCATION', `El punto que marcaste no está en ${d.name}. Elige el distrito donde está la chacra o busca el lugar otra vez.`);
+  const source = (PLACE_SOURCES.includes(p.source) ? p.source : 'DISTRITO') as PlaceSource;
+  const ccpp = p.ccpp !== undefined && p.ccpp !== null && p.ccpp !== '' ? String(p.ccpp) : undefined;
+  if (ccpp && (!/^04\d{8}$/.test(ccpp) || ccpp.slice(0, 6) !== district)) fail('BAD_LOCATION', `Ese centro poblado no es de ${d.name}.`);
+  const label = String(p.label ?? '').replace(/\s+/g, ' ').trim().slice(0, 140) || d.name;
+  const ref = String(p.ref ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const acc = Number(p.accuracy);
+  return {
+    lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, label, source,
+    ...(ref ? { ref } : {}), ...(ccpp ? { ccpp } : {}),
+    ...(source === 'GPS' && Number.isFinite(acc) && acc >= 0 ? { accuracy: Math.min(100_000, Math.round(acc)) } : {}),
+    at: t,
+  };
+}
 const DOC_STATUS = ['OK', 'PENDING', 'OBSERVED', 'MISSING'];
 export function cleanDocs(list: unknown): DocItem[] {
   if (!Array.isArray(list)) return [];
@@ -120,6 +147,10 @@ on('USER_REGISTER', (c: Ctx) => {
     payout: [], acceptsCash: false, serviceAreas: [], deliveryDays: [], memberIds: [p.userId],
     counters: emptyCounters(), initials: initials(o.name || name), color: colorFor(p.orgId),
   };
+  if (role === 'FARMER') {
+    const pin = cleanPin(o.location, district, t);
+    if (pin) org.location = pin;
+  }
   if (role === 'BUYER') {
     const trialDays = w.settings.membership.trialDays;
     org.subscription = {
@@ -235,10 +266,30 @@ on('FARM_ADD', (c) => {
   const area = Number(p.areaHa);
   if (!(area > 0 && area < 500)) fail('BAD_AREA', 'Escribe el área en hectáreas (por ejemplo 1,5).');
   if (!DISTRICT_BY_CODE[p.district]) fail('BAD_DISTRICT', 'Elige el distrito de la chacra.');
+  if (c.w.farms[p.farmId]) fail('DUPLICATE', 'Esta chacra ya se guardó.');
+  const place = cleanPin(p.place, p.district, c.t);
   c.w.farms[p.farmId] = {
-    id: p.farmId, orgId: o.id, name: String(p.name).trim(), district: p.district, areaHa: area, tenure: p.tenure ?? 'PROPIA',
-    crops: p.crops ?? [], gps: p.gps ?? 'MANUAL', photos: p.photoIds ?? [], createdAt: c.t,
+    id: p.farmId, orgId: o.id, name: String(p.name).trim().slice(0, 120), district: p.district, areaHa: area, tenure: (['PROPIA', 'COMUNAL', 'ALQUILADA'].includes(p.tenure) ? p.tenure : 'PROPIA'),
+    crops: (Array.isArray(p.crops) ? p.crops : []).map(String).filter((id: string) => !!PRODUCT_BY_ID[id]).slice(0, 30),
+    gps: place?.source === 'GPS' || p.gps === 'APP' ? 'APP' : 'MANUAL', photos: (Array.isArray(p.photoIds) ? p.photoIds : []).map(String).slice(0, 6), createdAt: c.t,
+    ...(place ? { place } : {}),
   };
+});
+
+/** Corregir dónde está una chacra (el agricultor o el equipo). */
+on('FARM_LOCATE', (c) => {
+  const p = c.e.p;
+  const f = must(c.w.farms[p.farmId], 'NOT_FOUND', 'No encontramos esa chacra.');
+  if (c.a.role !== 'ADMIN') requireMember(c.a, f.orgId);
+  const district = String(p.district ?? f.district);
+  if (!DISTRICT_BY_CODE[district]) fail('BAD_DISTRICT', 'Elige el distrito de la chacra.');
+  const place = cleanPin(p.place, district, c.t);
+  if (!place) fail('BAD_LOCATION', 'Busca el lugar de tu chacra o usa tu ubicación.');
+  const before = `${DISTRICT_BY_CODE[f.district]?.name ?? f.district}${f.place ? ` (${f.place.label})` : ''}`;
+  f.district = district;
+  f.place = place;
+  if (place.source === 'GPS') f.gps = 'APP';
+  audit(c, c.a.id, 'CHACRA_UBICACION', f.orgId, `${f.name}: ${before} → ${DISTRICT_BY_CODE[district].name} (${place.label})`);
 });
 
 /* ---------- Expedientes de verificación (RF-VER-01 a RF-VER-16, CU-41) ---------- */

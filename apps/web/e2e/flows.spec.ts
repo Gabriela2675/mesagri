@@ -33,6 +33,7 @@ test('compra: pedido, aceptación con comisión a la vista, pago directo, entreg
   await b.getByRole('button', { name: /Usar foto de ejemplo/ }).first().click();
   await b.getByLabel('Número de operación').fill('05123987');
   const yapeCode = b.getByLabel('Código de seguridad de Yape');
+  await yapeCode.waitFor({ timeout: 4000 }).catch(() => undefined); // aparece al elegir la foto
   if (await yapeCode.count()) await yapeCode.fill('472');
   await tap(b, 'Enviar constancia');
   // Wilber confirma que le llegó, prepara y sale a entregar

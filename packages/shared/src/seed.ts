@@ -22,7 +22,7 @@ export const SEED_ANCHOR = limaTime(2026, 11, 3, 8, 30);
  * cargan otra vez (una sola vez): las cuentas de prueba vuelven a su estado inicial. El equipo de
  * Mesagri que se creó o personalizó en el panel se conserva.
  */
-export const SEED_VERSION = '2026-11-02 equipo del proyecto';
+export const SEED_VERSION = '2026-11-20 ubicaciones y revisión de publicaciones';
 const T = (m: number, d: number, hh = 9, mm = 0) => limaTime(2026, m, d, hh, mm);
 
 /* ---------- RUC de ejemplo (con dígito verificador real) ---------- */
@@ -194,12 +194,18 @@ function base(w: World) {
 
   /* Chacras */
   const farm = (f: Farm) => { w.farms[f.id] = f; };
-  farm({ id: 'farm-hector', orgId: 'org-hector', name: 'La Pampa', district: '040208', areaHa: 4, tenure: 'PROPIA', crops: ['arroz_cascara', 'cebolla_roja', 'tomate', 'frejol_canario'], gps: 'APP', photos: [], createdAt: T(8, 20) });
-  farm({ id: 'farm-wilber', orgId: 'org-wilber', name: 'Pampa Alta', district: '040519', areaHa: 1.5, tenure: 'COMUNAL', crops: ['papa_amarilla', 'papa_blanca', 'haba_verde', 'cebolla_roja'], gps: 'APP', photos: [], createdAt: T(8, 15) });
-  farm({ id: 'farm-wilber2', orgId: 'org-wilber', name: 'Coporaque', district: '040506', areaHa: 1.5, tenure: 'ALQUILADA', crops: ['papa_amarilla', 'maiz_choclo'], gps: 'APP', photos: [], createdAt: T(8, 15) });
-  farm({ id: 'farm-justina', orgId: 'org-justina', name: 'Chacra de la loma', district: '040519', areaHa: 0.8, tenure: 'COMUNAL', crops: ['papa_nativa', 'haba_verde', 'quinua'], gps: 'APP', photos: [], createdAt: T(9, 28) });
-  farm({ id: 'farm-lapunta', orgId: 'org-lapunta', name: 'Parcelas de la asociación', district: '040201', areaHa: 60, tenure: 'PROPIA', crops: ['arroz_cascara', 'arroz_pilado', 'frejol_canario'], gps: 'APP', photos: [], createdAt: T(7, 1) });
-  farm({ id: 'farm-lucio', orgId: 'org-lucio', name: 'Lote 14, Majes', district: '040520', areaHa: 5, tenure: 'PROPIA', crops: ['frejol_canario', 'cebolla_roja', 'ajo'], gps: 'APP', photos: [], createdAt: T(6, 10) });
+  farm({ id: 'farm-hector', orgId: 'org-hector', name: 'La Pampa', district: '040208', areaHa: 4, tenure: 'PROPIA', crops: ['arroz_cascara', 'cebolla_roja', 'tomate', 'frejol_canario'], gps: 'APP', photos: [], createdAt: T(8, 20),
+    place: { lat: -16.61027, lng: -72.69202, label: 'Pampa Baja', source: 'CCPP', ccpp: '0402080010', ref: 'Entrando por la Panamericana, junto al canal de regadío', at: T(8, 20) } });
+  farm({ id: 'farm-wilber', orgId: 'org-wilber', name: 'Pampa Alta', district: '040519', areaHa: 1.5, tenure: 'COMUNAL', crops: ['papa_amarilla', 'papa_blanca', 'haba_verde', 'cebolla_roja'], gps: 'APP', photos: [], createdAt: T(8, 15),
+    place: { lat: -15.6563, lng: -71.6672, label: 'A 200 m de Pampajashi', source: 'GPS', accuracy: 9, ref: 'Andenes de arriba, pasando la capilla', at: T(8, 15) } });
+  farm({ id: 'farm-wilber2', orgId: 'org-wilber', name: 'Coporaque', district: '040506', areaHa: 1.5, tenure: 'ALQUILADA', crops: ['papa_amarilla', 'maiz_choclo'], gps: 'APP', photos: [], createdAt: T(8, 15),
+    place: { lat: -15.62722, lng: -71.64611, label: 'Coporaque (distrito)', source: 'DISTRITO', at: T(8, 15) } });
+  farm({ id: 'farm-justina', orgId: 'org-justina', name: 'Chacra de la loma', district: '040519', areaHa: 0.8, tenure: 'COMUNAL', crops: ['papa_nativa', 'haba_verde', 'quinua'], gps: 'APP', photos: [], createdAt: T(9, 28),
+    place: { lat: -15.65571, lng: -71.65754, label: 'Manzanayoc Pampa', source: 'CCPP', ccpp: '0405190224', at: T(9, 28) } });
+  farm({ id: 'farm-lapunta', orgId: 'org-lapunta', name: 'Parcelas de la asociación', district: '040201', areaHa: 60, tenure: 'PROPIA', crops: ['arroz_cascara', 'arroz_pilado', 'frejol_canario'], gps: 'APP', photos: [], createdAt: T(7, 1),
+    place: { lat: -16.6383, lng: -72.708, label: 'Parcelas de La Punta', source: 'GPS', accuracy: 15, ref: 'Camino a la playa La Punta, portón de la asociación', at: T(7, 1) } });
+  farm({ id: 'farm-lucio', orgId: 'org-lucio', name: 'Lote 14, Majes', district: '040520', areaHa: 5, tenure: 'PROPIA', crops: ['frejol_canario', 'cebolla_roja', 'ajo'], gps: 'APP', photos: [], createdAt: T(6, 10),
+    place: { lat: -16.33602, lng: -72.25757, label: 'Sección B2 (Pampa de Majes)', source: 'CCPP', ccpp: '0405200014', ref: 'Lote 14', at: T(6, 10) } });
 
   /* Compradores MYPE */
   const geranios = mkOrg(w, {
@@ -395,8 +401,11 @@ function script(): MEvent[] {
   let n = 0, op = 5_120_000, wb = 100;
   const ev = (t: number, actor: string, type: string, p: any) => { E.push({ id: `seed-${String(++n).padStart(4, '0')}`, type, actor, t, lamport: 0, p }); };
   const opn = () => String(++op).padStart(8, '0');
-  const pub = (t: number, actor: string, id: string, productId: string, unit: string, qty: number, price: number, harvestDays = 1, extra: any = {}) =>
+  // cada publicación pasa por la revisión: la automática y luego el equipo (Lucía la aprueba al ratito)
+  const pub = (t: number, actor: string, id: string, productId: string, unit: string, qty: number, price: number, harvestDays = 1, extra: any = {}) => {
     ev(t, actor, 'LISTING_PUBLISH', { orgId: ORG_OF[actor], listingId: id, productId, unit, unitKg: unit === 'saco' ? (extra.unitKg ?? 50) : 1, qty, price, harvestDate: t - harvestDays * DAY, quality: 'PRIMERA', farmId: extra.farmId, photoIds: extra.photoIds ?? [], harvestSeal: !!extra.seal, confirmPrice: true, fromLotId: extra.fromLotId });
+    if (!extra.pending) ev(t + (extra.reviewMin ?? 25) * MIN, 'u-lucia', 'LISTING_MODERATE', { listingId: id, decision: 'APPROVE', reason: '' });
+  };
 
   const sale = (s: SaleSpec) => {
     const subId = s.id;
@@ -556,6 +565,10 @@ function script(): MEvent[] {
   pub(T(10, 2, 7), 'u-lucio', 'l-l-frejol', 'frejol_canario', 'kg', 300, 8.0, 10, { farmId: 'farm-lucio' });
   pub(T(11, 2, 7), 'u-teodoro', 'l-p-arroz', 'arroz_pilado', 'saco', 60, 175, 6, { farmId: 'farm-lapunta' });
   pub(T(11, 2, 7, 5), 'u-teodoro', 'l-p-frejol', 'frejol_canario', 'kg', 400, 7.7, 8, { farmId: 'farm-lapunta' });
+
+  // Por revisar en el panel (W-06): la papa nativa de Justina (sin observaciones) y una cebolla sin foto a un precio muy bajo
+  pub(T(11, 3, 6, 50), 'u-justina', 'l-j-nativa2', 'papa_nativa', 'kg', 200, 3.6, 0, { farmId: 'farm-justina', photoIds: ['seed-photo-papa_nativa'], seal: true, pending: true });
+  pub(T(11, 3, 7, 20), 'u-wilber', 'l-w-cebolla2', 'cebolla_roja', 'kg', 800, 0.5, 1, { farmId: 'farm-wilber', pending: true });
 
   /* ===== Noviembre: lo que está en curso al abrir la demo ===== */
   // Doña Charo: compras de la semana (cuentan para el límite del plan Básico)

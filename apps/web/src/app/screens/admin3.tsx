@@ -101,7 +101,7 @@ export function AccountTools({ o }: { o: Org }) {
         {role !== 'ANALYST' && <Btn sm kind="sec" icon={shown ? 'eye-off' : 'eye'} onClick={reveal}>{shown ? 'Ocultar datos' : 'Ver celular y DNI'}</Btn>}
         {shown && members[0] && isPhoneValid(members[0].phone) && <a className="btn sec sm" href={`https://wa.me/51${members[0].phone}`} target="_blank" rel="noopener noreferrer"><Icon n="smartphone" s="1.25em" />WhatsApp</a>}
         {canEdit && <Btn sm kind={mode === 'edit' ? 'dark' : 'sec'} icon="pencil" onClick={() => setMode(mode === 'edit' ? '' : 'edit')}>Corregir datos</Btn>}
-        {role === 'GENERAL' && <Btn sm kind={mode === 'delete' ? 'danger' : 'secd'} icon="trash-2" onClick={() => setMode(mode === 'delete' ? '' : 'delete')}>Eliminar cuenta</Btn>}
+        {role === 'GENERAL' && <Btn sm kind={mode === 'delete' ? 'danger' : 'secd'} icon="trash" onClick={() => setMode(mode === 'delete' ? '' : 'delete')}>Eliminar cuenta</Btn>}
       </div>
       {mode === 'edit' && <EditAccount o={o} members={members} onDone={() => setMode('')} />}
       {mode === 'delete' && <DeleteAccount o={o} onDone={() => setMode('')} />}
@@ -264,7 +264,7 @@ function TicketThread({ t }: { t: Ticket }) {
       <p className="wnote" style={{ marginTop: '4px' }}>{u?.name ?? '—'} · {orgName(w, t.orgId)} ({TYPE_LABEL[o?.type ?? ''] ?? ''}) · {dateShort(t.at)} {hhmm(t.at)}</p>
       <div className="row g8 wrap" style={{ marginBottom: '10px' }}>
         {o && o.type !== 'MESAGRI' && <Btn xs kind="sec" icon="user" onClick={() => A.go('W-05', { id: o.id })}>Ver la cuenta</Btn>}
-        {t.topic === DELETE_TOPIC && o?.status !== 'DELETED' && roleOf(A) === 'GENERAL' && <Btn xs kind="secd" icon="trash-2" onClick={() => A.go('W-05', { id: t.orgId, del: 1 })}>Eliminar la cuenta</Btn>}
+        {t.topic === DELETE_TOPIC && o?.status !== 'DELETED' && roleOf(A) === 'GENERAL' && <Btn xs kind="secd" icon="trash" onClick={() => A.go('W-05', { id: t.orgId, del: 1 })}>Eliminar la cuenta</Btn>}
         {t.topic === DELETE_TOPIC && o?.status === 'DELETED' && <Pill tone="gray">La cuenta ya se eliminó</Pill>}
       </div>
       <div className="stack tight" style={{ maxHeight: '420px', overflowY: 'auto' }}>

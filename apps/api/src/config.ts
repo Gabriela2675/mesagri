@@ -141,6 +141,33 @@ export const CONFIG = {
     /** tope de consultas al proveedor por día (cada una cuesta) */
     dailyMax: num('DNI_API_DAILY_MAX', 300),
   },
+  /**
+   * Buscador de direcciones para ubicar la chacra (además de los 4 727 centros poblados del INEI, que
+   * van dentro de la app). Por defecto Photon (datos de OpenStreetMap, sin clave). Con
+   * GOOGLE_MAPS_API_KEY usa Google (Geocoding API, tiene costo por consulta). GEOCODER=off lo apaga.
+   */
+  geocoder: {
+    kind: ((env('GEOCODER', '') ?? '').trim().toLowerCase() || ((env('GOOGLE_MAPS_API_KEY', '') ?? '').trim() ? 'google' : 'photon')) as 'photon' | 'google' | 'off',
+    photonUrl: (env('PHOTON_URL', 'https://photon.komoot.io') ?? '').replace(/\/+$/, ''),
+    googleKey: (env('GOOGLE_MAPS_API_KEY', '') ?? '').trim(),
+    timeoutMs: num('GEOCODER_TIMEOUT_MS', 5000),
+    /** consultas por hora por IP (el buscador se usa al escribir) */
+    perHour: num('GEOCODER_PER_HOUR', 150),
+  },
+  /**
+   * Revisión de publicaciones con IA (Claude, de Anthropic): mira las fotos, el precio y la cantidad
+   * antes de que el equipo decida. Sin ANTHROPIC_API_KEY queda la revisión por reglas. La clave se
+   * pega solo en Render → Environment. Cada revisión tiene un costo pequeño; AI_REVIEW_DAILY_MAX la limita.
+   */
+  aiReview: {
+    key: (env('ANTHROPIC_API_KEY', '') ?? '').trim(),
+    model: (env('AI_REVIEW_MODEL', 'claude-haiku-5-5') ?? '').trim() || 'claude-haiku-5-5',
+    url: (env('ANTHROPIC_API_URL', 'https://api.anthropic.com/v1/messages') ?? '').trim(),
+    timeoutMs: num('AI_REVIEW_TIMEOUT_MS', 60000),
+    dailyMax: num('AI_REVIEW_DAILY_MAX', 200),
+    /** fotos que mira por publicación (las primeras) */
+    maxPhotos: num('AI_REVIEW_MAX_PHOTOS', 3),
+  },
   /** Firma de los tokens de acceso (JWT HS256, 15 minutos). */
   jwtSecret: env('JWT_SECRET', 'mesagri-desarrollo-cambiar-en-produccion')!,
   accessTtlSeconds: num('ACCESS_TTL_SECONDS', 15 * 60),

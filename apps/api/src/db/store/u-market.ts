@@ -22,7 +22,7 @@ export const listingsUnit: Unit = {
       uuid: l.id, organization_id: ids.need('organizations', l.orgId), catalog_product_id: ids.need('catalog_products', l.productId), farm_id: ids.opt('farms', l.farmId),
       variety: cut(l.variety, 60), unit: l.unit, unit_kg: l.unitKg, qty_total: l.qtyTotal, qty_available: l.available, qty_reserved: l.reserved, qty_sold: l.sold,
       min_qty: l.minQty, unit_price: l.price, harvest_date: dt(l.harvestDate), quality: l.quality, harvest_seal: !!l.harvestSeal, status: l.status,
-      review_reason: cut(l.reviewReason, 500), review_flags: js(l.flags), lot_code: nv(v.lot), from_lot_uuid: nv(l.fromLotId), created_at: dt(l.createdAt),
+      review_reason: cut(l.reviewReason, 500), review_flags: js(l.flags), review: js(l.review), lot_code: nv(v.lot), from_lot_uuid: nv(l.fromLotId), created_at: dt(l.createdAt),
       expires_at: dt(l.expiresAt), request_uuid: nv(l.requestId),
     });
     ids.set('listings', l.id, id);
@@ -54,7 +54,7 @@ export const listingsUnit: Unit = {
         quality: r.quality, farmId: ostr(r.farm_uuid), photoIds: (photos.get(r.id) ?? []).map(x => x.file_uuid), harvestSeal: !!r.harvest_seal, status: r.status,
         reviewReason: ostr(r.review_reason), createdAt: tm(r.created_at), expiresAt: r.expires_at ? tm(r.expires_at) : Infinity, minQty: Number(r.min_qty),
         fromLotId: ostr(r.from_lot_uuid), tiers: ts?.length ? ts.map(t => ({ minKg: Number(t.min_kg), price: Number(t.unit_price) })) : undefined,
-        flags: r.review_flags ?? undefined, requestId: ostr(r.request_uuid),
+        flags: r.review_flags ?? undefined, requestId: ostr(r.request_uuid), review: r.review ?? undefined,
       } as Listing);
       w.listings[l.id] = l;
     }

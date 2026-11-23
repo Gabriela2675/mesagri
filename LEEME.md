@@ -106,6 +106,61 @@ transportista (quien maneja) y al almacén (representante):
 - Las fotos del DNI y del rostro las ve solo el equipo de verificación y se borran a los 90 días
   (Ley 29733).
 
+## Dónde está la chacra: ubicaciones verificadas
+
+- La app tiene los **109 distritos de las 8 provincias de Arequipa** (antes solo 22) con su nombre
+  oficial, su capital y sus coordenadas, y los **4 727 centros poblados del INEI** (anexos,
+  caseríos, sectores, «Sección B2 (Pampa de Majes)»…). Van dentro de la app: el buscador funciona
+  **sin internet** y se carga recién al abrirlo (unos 80 KB).
+- **Buscador como el de un mapa** (registro del agricultor y Perfil → Mis chacras): mientras la
+  persona escribe salen las coincidencias, aunque escriba sin tildes o como suena («yanke»,
+  «chivai», «cabana conde»). Con internet también salen **direcciones** (calles, lugares) de
+  OpenStreetMap por medio del servidor; con `GOOGLE_MAPS_API_KEY` en Render, de Google (tiene costo
+  por consulta). Lo que se elige **existe**: es del registro del INEI, del GPS o del buscador de
+  direcciones.
+- **Usar mi ubicación** (GPS del celular): dice en qué distrito cae el punto y cuál es el pueblo más
+  cercano. Los límites oficiales son aproximados, así que cerca de un límite la app **pide confirmar
+  el distrito** («¿Yanque o Coporaque?»). Probado con los 4 727 centros poblados: acierta el
+  distrito en el 97 % y el correcto está entre las opciones en el 99,7 %.
+- Se ve un **mapa del distrito** con el punto y los pueblos de alrededor (dibujado con los datos del
+  INEI, sin internet) y el botón **Ver en Google Maps**. Se puede escribir una **referencia para
+  llegar** («a 200 m del puente, portón verde»).
+- El servidor comprueba que el punto esté dentro del distrito elegido. **El punto exacto solo lo
+  ven el agricultor y el equipo** (en el expediente y en la revisión de publicaciones, con el enlace
+  a Google Maps); los compradores ven solo el distrito (RN-17).
+- Los datos salen de los datos abiertos del INEI; `scripts/geo/generar_geo.py` explica de dónde y
+  cómo se generan.
+
+## Revisión de cada publicación antes de verse
+
+Ninguna publicación nueva aparece en el catálogo hasta pasar dos filtros:
+
+1. **Revisión automática.** Siempre corren las reglas: precio frente al de chacra y mayorista,
+   cantidad frente a lo que rinde la chacra, fotos (si hay, si son de la cámara de la app o de la
+   galería, si ya están en la publicación de otro agricultor), fecha de cosecha e historial del
+   agricultor. Si el servidor tiene **`ANTHROPIC_API_KEY`**, además una **IA (Claude, de
+   Anthropic)** mira las fotos: si muestran el producto declarado, si parecen fotos reales de la
+   cosecha o imágenes de internet, capturas o dibujos, si se ven bien y si el precio y la cantidad
+   son creíbles. Deja un veredicto («Sin observaciones», «Mirar con cuidado» o «No parece
+   verídica»), un puntaje, lo que vio en cada foto y un mensaje sugerido para el agricultor.
+2. **El equipo** (panel → Publicaciones → «Por revisar»; administración general, verificación y
+   soporte) ve las fotos, la chacra con su ubicación y la revisión automática, y decide:
+   **Aprobar y publicar**, **Pedir cambios** (el agricultor la corrige y la envía otra vez) o
+   **Rechazar**.
+3. **Recién entonces se publica.** El agricultor ve en «Mis publicaciones» en qué paso va y le
+   llega un aviso cuando se publica.
+
+Si después cambia las fotos o pone un precio fuera de rango, la publicación vuelve a revisión
+antes de mostrarse otra vez (sus pedidos en curso siguen). La IA ayuda; **decide una persona**.
+
+**Activar la IA** (opcional): crea una cuenta en la consola de Anthropic (platform.claude.com),
+genera una clave de API y pégala **solo en Render → Environment** como `ANTHROPIC_API_KEY` (nunca en
+el chat ni en GitHub). Por defecto usa el modelo `claude-haiku-5-5` (el más económico; se cambia con
+`AI_REVIEW_MODEL`), mira hasta 3 fotos por publicación y hace como máximo 200 revisiones al día
+(`AI_REVIEW_DAILY_MAX`). Cada revisión queda anotada en la tabla `ai_reviews` (modelo, veredicto y
+tokens usados, para ver el costo). Sin la clave, o en la versión sin internet, queda la revisión
+por reglas y el equipo mira las fotos.
+
 ## Pagos: cómo se comprueba que llegaron
 
 Un número de operación o una captura **se pueden inventar** (hay apps falsas que hacen constancias
@@ -150,9 +205,10 @@ que parecen reales). Lo único que vale es ver el dinero **en la cuenta que lo r
   así no puede registrarse otra vez con el mismo DNI y celular. Cuando alguien pide borrar su
   cuenta desde la app (Perfil → Privacidad), llega como mensaje de ayuda con el botón para
   eliminarla.
-- **Publicaciones**: «Marcadas» (las que revisan las reglas) y **«Todas las publicaciones»** para
-  buscar cualquiera y pausarla (el agricultor la corrige), ocultarla o **eliminarla** (también se
-  borran sus fotos). Sus pedidos en curso siguen.
+- **Publicaciones**: «Por revisar» (cada publicación nueva o cambiada, con la revisión automática;
+  ver «Revisión de cada publicación antes de verse») y **«Todas las publicaciones»** para buscar
+  cualquiera y pausarla (el agricultor la corrige y la envía otra vez a revisión), ocultarla o
+  **eliminarla** (también se borran sus fotos). Sus pedidos en curso siguen.
 - **Mensajes de ayuda**: las consultas que llegan desde la app (Perfil → Ayuda) tienen su propia
   bandeja: por responder, respondidas y cerradas, con respuestas rápidas. La persona lo lee en su
   consulta y le llega un aviso; si vuelve a escribir, la consulta vuelve a «Por responder».
@@ -400,13 +456,13 @@ npm ci                 # dependencias
 npm run build          # shared, API y web
 npm run dev:api        # API en http://localhost:3000 (necesita MySQL y .env)
 npm run dev:web        # web con recarga en http://localhost:5173 (usa la API del 3000)
-npm test               # reglas y privacidad (67 pruebas), MySQL ida y vuelta y API completo (30 pruebas)
+npm test               # reglas, ubicaciones, revisión y privacidad (86 pruebas), MySQL ida y vuelta y API completo (32 pruebas)
                        # y pantallas dibujadas sin navegador (6 pruebas)
-npm run e2e            # recorridos de punta a punta con el servidor (25 pruebas; con
+npm run e2e            # recorridos de punta a punta con el servidor (37 pruebas; con
                        # MESAGRI_TEAM_KEY=... prueba también la clave del equipo, como en la nube)
 npm run build:autonoma # app autónoma en apps/web/dist-app (APK y app web instalable)
 npm run apk            # Mesagri.apk (Linux, ver apps/android/build.sh)
-# recorridos en la versión autónoma (21 pruebas): servir dist-app y
+# recorridos en la versión autónoma (32 pruebas): servir dist-app y
 # MESAGRI_WEB=http://localhost:8090 MESAGRI_LOCAL=1 npx playwright test (en apps/web)
 ```
 

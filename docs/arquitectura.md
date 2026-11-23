@@ -187,6 +187,45 @@ dos cargos, RF-PAY-05).
   nada lo cumplía.
 - **Letra chica**: `textScale` admite 0,9 (chica), 1, 1,25 y 1,5.
 
+## Ubicaciones verificadas (migración 0013)
+
+- **Datos** (`packages/shared/src/ubigeo.ts`, `geo/ccpp.json`, `geo/limites.json`): los 109 distritos
+  de Arequipa con capital, coordenadas y un rectángulo que los contiene; 4 727 centros poblados y los
+  límites simplificados de cada distrito (INEI). `scripts/geo/generar_geo.py` los genera.
+- **Buscar y ubicar** (`packages/shared/src/places.ts`, puro): búsqueda sin tildes y por cómo suena
+  (con distancia de edición para errores), y «¿en qué distrito cae este punto?» combinando el
+  polígono con los centros poblados cercanos (si hay duda, `ambiguous` y varios `candidates`). Los
+  datos (`places-data.ts`) se cargan aparte: en la web es un trozo propio que se pide al abrir el
+  buscador y la versión autónoma lo guarda para usarlo sin señal.
+- **Reglas**: `USER_REGISTER` (agricultor) guarda `org.location` y `FARM_ADD`/`FARM_LOCATE`,
+  `farm.place` (`PlacePin`: punto, lugar elegido, referencia, de dónde salió, código del centro
+  poblado, precisión del GPS). `cleanPin` exige que el punto esté en Arequipa y en el rectángulo del
+  distrito, y que el centro poblado sea de ese distrito. Privacidad: solo el dueño y el equipo ven el
+  punto (`privacy.ts`, RN-17).
+- **Servidor** (`apps/api/src/places`): `GET /places/search` y `/places/reverse` consultan Photon
+  (OpenStreetMap) o Google (`GOOGLE_MAPS_API_KEY`) con tope por IP y memoria de 24 h, y devuelven
+  solo lugares de Arequipa con su distrito. Al arrancar, el servidor completa la tabla `ubigeo`.
+- **Web** (`apps/web/src/app/ui/place.tsx`): `PlacePicker` (buscador, GPS, mapa del distrito
+  dibujado con los límites, enlace a Google Maps y referencia) en el registro (A-05) y en Mis
+  chacras (A-16).
+
+## Revisión de publicaciones (migración 0014)
+
+- **Reglas** (`packages/shared/src/review.ts`): `rulesReview` (precio, cantidad, fotos, cosecha e
+  historial → veredicto `OK`/`OBSERVAR`/`RECHAZAR` y puntaje) y `mergeReviews` (suma lo de la IA sin
+  perder lo que marcaron las reglas).
+- **Acciones** (`engine/listings.ts`): `LISTING_PUBLISH` deja la publicación `IN_REVIEW` con
+  `review` (causa, hora, revisión automática); `LISTING_EDIT` la devuelve a revisión si cambian las
+  fotos o el precio sale de rango; `LISTING_RESUME` también, si el equipo pidió cambios;
+  `LISTING_MODERATE` del equipo aprueba (recién ahí `ACTIVE`), pide cambios o rechaza;
+  `LISTING_AI_REVIEW` (solo el servidor) anota a la IA para la versión revisada (`queuedAt`).
+- **IA** (`apps/api/src/review/ai-review.ts`): con `ANTHROPIC_API_KEY`, una cola de a una llama a la
+  API de Claude (Messages) con hasta 3 fotos en base64 y los datos, y pide la respuesta con una
+  herramienta obligatoria (`registrar_revision`). Espera a que las fotos lleguen, reintenta si la API
+  está saturada, marca fotos repetidas por su huella (sha256) y anota cada llamada en `ai_reviews`
+  (tope diario). `GET /review/info` le dice al panel si la IA está activa.
+- **Panel** (W-06): cola «Por revisar», tarjeta de la revisión automática y la decisión del equipo.
+
 ## Tareas programadas (14.7)
 
 Cada 20 segundos el servidor revisa si venció algún plazo (pedidos sin respuesta, conformidad

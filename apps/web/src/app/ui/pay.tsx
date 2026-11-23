@@ -8,6 +8,7 @@
  *   mismo aparece en el detalle del movimiento de quien recibe). Una captura o un número de
  *   operación solos se pueden inventar con apps falsas: lo que vale es lo que se ve en la cuenta.
  */
+import { useRef } from 'react';
 import { useApp } from '../ctx';
 import { Btn, Field, Inp, Card, Kv, Note, PhotoPick, Seg } from './kit';
 import { mesagriData } from '@mesagri/shared/queries';
@@ -85,7 +86,10 @@ export function proofPayload(p: Proof, method: PayMethod) {
  */
 export function ProofFields({ value, onChange, method, to, amount, photo = 'optional' }: { value: Proof; onChange: (p: Proof) => void; method: PayMethod; to: string; amount: number; photo?: 'required' | 'optional' | 'none' }) {
   const A = useApp();
-  const set = (patch: Partial<Proof>) => onChange({ ...value, ...patch });
+  // la foto llega después (se comprime aparte): se suma a lo último escrito, sin borrar lo que se tipeó mientras tanto
+  const cur = useRef(value);
+  cur.current = value;
+  const set = (patch: Partial<Proof>) => { cur.current = { ...cur.current, ...patch }; onChange(cur.current); };
   const sample = A.store.mode === 'stage' || LOCAL;
   return (
     <div className="stack">

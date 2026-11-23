@@ -4,7 +4,7 @@
  * chacras y expedientes de verificación.
  */
 import { DEFAULT_SETTINGS, structuredCloneSafe, orgStats, carrierStats, monthPurchases, periodOf } from '@mesagri/shared';
-import type { World, User, Org, Farm, VerifCase, Settings, LevelLimit, ShippingRoute, DocItem } from '@mesagri/shared';
+import type { World, User, Org, Farm, VerifCase, Settings, LevelLimit, ShippingRoute, DocItem, PlacePin } from '@mesagri/shared';
 import { exec, insertMany, rows, upsert, dt, js } from '../db';
 import { encrypt, decrypt } from '../secure';
 import { ROLES } from './reference';
@@ -272,7 +272,7 @@ export const orgsUnit: Unit = {
     const o = v.o, po = p?.o;
     const id = await upsert(c, 'organizations', {
       uuid: o.id, kind: o.type, trade_name: cut(o.name, 120), legal_name: cut(o.legalName, 160), ruc: nv(o.ruc), dni: nv(o.dni),
-      ubigeo: o.district, province_code: o.province, verification_level: o.level, status: o.status, suspended_reason: cut(o.suspendedReason, 500),
+      ubigeo: o.district, province_code: o.province, farm_location: js(o.location), verification_level: o.level, status: o.status, suspended_reason: cut(o.suspendedReason, 500),
       deleted_at: dt(o.deletedAt), deleted_reason: cut(o.deletedReason, 500),
       accepts_cash: !!o.acceptsCash, delivery_days: js(o.deliveryDays ?? []), pickup_point: cut(o.pickupPoint, 160),
       avatar_initials: String(o.initials ?? '').slice(0, 3), avatar_color: o.color, created_at: dt(o.createdAt),
@@ -453,7 +453,7 @@ export const orgsUnit: Unit = {
       const bd = buyers.get(r.id), tp = taxes.get(r.id), ad = addrs.get(r.id), sb = subs.get(r.id), st = stats.get(r.id);
       const o: Org = strip({
         id: r.uuid, type: r.kind, name: r.trade_name, legalName: ostr(r.legal_name), ruc: ostr(r.ruc), dni: ostr(r.dni), district: r.ubigeo, province: r.province_code,
-        address: ad ? ad.address_line : undefined, receiver: ostr(bd?.receiver_name), businessType: ostr(bd?.business_type) as Org['businessType'],
+        location: r.farm_location ?? undefined, address: ad ? ad.address_line : undefined, receiver: ostr(bd?.receiver_name), businessType: ostr(bd?.business_type) as Org['businessType'],
         level: r.verification_level, status: r.status, suspendedReason: ostr(r.suspended_reason), deletedAt: tms(r.deleted_at), deletedReason: ostr(r.deleted_reason),
         createdAt: tm(r.created_at), taxRegime: ostr(tp?.tax_regime) as Org['taxRegime'],
         payout: (payouts.get(r.id) ?? []).map(a => strip({
@@ -519,12 +519,18 @@ export const farmsUnit: Unit = {
     const id = await upsert(c, 'farms', {
       uuid: f.id, organization_id: ids.need('organizations', f.orgId), name: cut(f.name, 120), ubigeo: f.district, area_ha: f.areaHa, tenure: f.tenure,
       crops: js(f.crops ?? []), gps_source: f.gps, photos: js(f.photos ?? []), created_at: dt(f.createdAt),
+      latitude: f.place?.lat ?? null, longitude: f.place?.lng ?? null, place_label: cut(f.place?.label, 160) ?? null, reference: cut(f.place?.ref, 200) ?? null,
+      location_source: f.place?.source ?? null, ccpp_code: f.place?.ccpp ?? null, gps_accuracy_m: f.place?.accuracy ?? null, located_at: dt(f.place?.at),
     });
     ids.set('farms', f.id, id);
   },
   async load({ c, w }) {
     for (const r of await rows(c, 'SELECT f.*, o.uuid AS org_uuid FROM farms f JOIN organizations o ON o.id = f.organization_id ORDER BY f.id')) {
-      w.farms[r.uuid] = { id: r.uuid, orgId: r.org_uuid, name: r.name, district: r.ubigeo, areaHa: Number(r.area_ha), tenure: r.tenure, crops: r.crops ?? [], gps: r.gps_source, photos: r.photos ?? [], createdAt: tm(r.created_at) };
+      const f: Farm = { id: r.uuid, orgId: r.org_uuid, name: r.name, district: r.ubigeo, areaHa: Number(r.area_ha), tenure: r.tenure, crops: r.crops ?? [], gps: r.gps_source, photos: r.photos ?? [], createdAt: tm(r.created_at) };
+      if (r.latitude !== null && r.latitude !== undefined && r.longitude !== null && r.longitude !== undefined) {
+        f.place = strip({ lat: Number(r.latitude), lng: Number(r.longitude), label: r.place_label ?? '', ref: r.reference ?? undefined, source: r.location_source ?? 'DISTRITO', ccpp: r.ccpp_code ?? undefined, accuracy: r.gps_accuracy_m ?? undefined, at: tms(r.located_at) ?? tm(r.created_at) }) as PlacePin;
+      }
+      w.farms[r.uuid] = f;
     }
   },
 };

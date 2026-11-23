@@ -40,7 +40,17 @@ async function toIdentity(page: Page, phoneNo: string) {
   for (const s of await n.getByRole('switch').all()) if ((await s.getAttribute('aria-checked')) !== 'true') await s.click();
   await tap(n, 'Acepto y continúo');
   await expect(screen(n)).toHaveAttribute('data-screen', 'A-05');
+  await pickPlace(n, 'yanke', /^Yanque/);
   return n;
+}
+
+/** Dónde está la chacra: se escribe (aunque sea con errores) y se elige de las coincidencias. */
+async function pickPlace(n: Locator, text: string, option: RegExp) {
+  const search = n.getByLabel('Buscar el lugar de la chacra');
+  await search.scrollIntoViewIfNeeded();
+  await search.fill(text);
+  await n.getByRole('option', { name: option }).first().click();
+  await expect(n.getByRole('group', { name: 'Lugar de la chacra' })).toBeVisible();
 }
 
 test('agricultor: DNI con su dígito, fotos del DNI y el rostro en tres ángulos con la cámara guiada; el panel lo revisa solo', async ({ page }) => {

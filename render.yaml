@@ -63,6 +63,13 @@ services:
         sync: false
       - key: DNI_API_TOKEN
         sync: false
+      # Revisión de publicaciones con IA (opcional; ver LEEME → «Revisión de cada publicación»).
+      # La clave de Anthropic se pega solo aquí, en Render → Environment.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Direcciones de Google para ubicar la chacra (opcional; sin ella, OpenStreetMap)
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
       - key: WHATSAPP_TOKEN
         sync: false
       - key: WHATSAPP_PHONE_ID

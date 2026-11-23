@@ -5,7 +5,7 @@
 import { test, expect } from '@playwright/test';
 import { start, phone, screen, tap, nav, persona, webPanel } from './util';
 
-test('publicar con la voz: la frase pasa sola a «Revisa y publica» y el comprador la encuentra (D-04)', async ({ page }) => {
+test('publicar con la voz: la frase pasa sola a «Revisa y publica», el equipo la revisa y recién el comprador la encuentra (D-04)', async ({ page }) => {
   const errors = await start(page);
   const f = phone(page, 0), b = phone(page, 1);
   const wilberCebolla = b.getByRole('button', { name: /Cebolla roja, S\/ 1,50 por kilo, de Wilber/ });
@@ -24,11 +24,28 @@ test('publicar con la voz: la frase pasa sola a «Revisa y publica» y el compra
   await expect(f.getByRole('button', { name: 'Publicar', exact: true })).toBeDisabled();
   await f.getByRole('button', { name: 'Usar foto de ejemplo: Foto de la cosecha' }).first().click();
   await expect(f.getByText('Con foto')).toBeVisible();
+  await expect(f.getByText(/Antes de verse en el catálogo, tu publicación la revisa la IA/)).toBeVisible();
   await tap(f, 'Publicar', true);
   await expect(screen(f)).toHaveAttribute('data-screen', 'A-09');
   await expect(f.getByText('50 kg · quedan 50 kg')).toBeVisible();
-  // Doña Charo ya la ve en los resultados que tenía abiertos
+  // queda en revisión: primero la automática, después el equipo
+  const card = f.locator('.card').filter({ hasText: '50 kg · quedan 50 kg' });
+  await expect(card.getByText('En revisión')).toBeVisible();
+  await expect(card.getByRole('list', { name: 'Revisión de tu publicación' })).toContainText('Revisión del equipo de Mesagri · ahora');
+  await expect(wilberCebolla).toHaveCount(before);
+  // el equipo la revisa en el panel y la aprueba
+  const w = await webPanel(page, /Lucía/);
+  await w.locator('aside.side').getByRole('button', { name: /^Publicaciones/ }).click();
+  await expect(screen(w)).toHaveAttribute('data-screen', 'W-06');
+  await w.getByRole('row', { name: /Cebolla roja · 50 kg.*Wilber/ }).first().click();
+  await expect(w.getByText('Revisión automática por reglas')).toBeVisible();
+  await expect(w.getByText('Sin observaciones').first()).toBeVisible();
+  await tap(w, 'Aprobar y publicar');
+  await expect(w.getByText('Aprobada y publicada: ya se ve en el catálogo.')).toBeVisible();
+  // recién ahora Doña Charo la ve en los resultados que tenía abiertos
+  await page.getByRole('tab', { name: /Celulares/ }).click();
   await expect(wilberCebolla).toHaveCount(before + 1);
+  await expect(f.locator('.card').filter({ hasText: '50 kg · quedan 50 kg' }).getByText('Activa')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -65,6 +82,14 @@ test('almacén aliado: reserva con cálculo, ingreso pesado con constancia y ven
   const ok = f.getByRole('dialog').getByRole('button', { name: 'Sí, confirmo' });
   if (await ok.count()) await ok.click();
   await expect(f.getByText('En venta').first()).toBeVisible();
+  // pasa por la revisión: el equipo la aprueba en el panel
+  const w = await webPanel(page, /Lucía/);
+  await w.locator('aside.side').getByRole('button', { name: /^Publicaciones/ }).click();
+  await w.getByRole('row', { name: /Wilber/ }).filter({ hasText: /Sin observaciones|Mirar con cuidado/ }).first().click();
+  await expect(w.getByText(/Sale de un lote pesado y guardado en un almacén aliado/)).toBeVisible();
+  await tap(w, 'Aprobar y publicar');
+  await expect(w.getByText('Aprobada y publicada: ya se ve en el catálogo.')).toBeVisible();
+  await page.getByRole('tab', { name: /Celulares/ }).click();
   // Doña Charo lo ve con el sello
   await b.getByLabel('Buscar productos').fill('papa');
   await b.getByLabel('Buscar productos').press('Enter');
@@ -110,6 +135,13 @@ test('registro: un agricultor nuevo completa los 5 pasos y Lucía aprueba su niv
   for (const s of await n.getByRole('switch').all()) if ((await s.getAttribute('aria-checked')) !== 'true') await s.click();
   await tap(n, 'Acepto y continúo');
   await expect(screen(n)).toHaveAttribute('data-screen', 'A-05');
+  // sin decir dónde está la chacra no se puede seguir; se busca como en un mapa y se elige
+  await n.getByLabel('Buscar el lugar de la chacra').fill('sabandia');
+  await expect(n.getByRole('option').first()).toContainText('Sabandía');
+  await n.getByLabel('Buscar el lugar de la chacra').fill('yanque');
+  await n.getByRole('option', { name: /^Yanque/ }).first().click();
+  await expect(n.getByRole('group', { name: 'Lugar de la chacra' })).toContainText('Yanque · Caylloma');
+  await expect(n.getByRole('group', { name: 'Lugar de la chacra' })).toContainText('Ver en Google Maps');
   await n.getByLabel('Nombre completo').fill('Teodora Quispe Mamani');
   await n.getByLabel('DNI', { exact: true }).fill('41235876');
   await n.getByLabel('Dígito de verificación').fill('2');
@@ -137,6 +169,11 @@ test('registro: un agricultor nuevo completa los 5 pasos y Lucía aprueba su niv
   await expect(row).toContainText('Yape propio');
   await row.getByRole('button', { name: /^(Tomar|Abrir)$/ }).click();
   await expect(screen(w)).toHaveAttribute('data-screen', 'W-04');
+  // dónde está su chacra (lo eligió de la lista del INEI), con el enlace para verlo en Google Maps
+  const where = w.getByRole('row', { name: /Ubicación de la chacra/ });
+  await expect(where).toContainText('Yanque, Caylloma');
+  await expect(where).toContainText('Distrito oficial del INEI');
+  await expect(where.getByRole('button', { name: /Ver en Google Maps/ })).toBeVisible();
   // la revisión automática corre sola al abrir el expediente: lee el DNI de la foto (de otra persona) y lo marca
   const rev = w.getByRole('region', { name: 'Revisión automática de identidad' });
   await expect(rev).toBeVisible();
@@ -153,7 +190,7 @@ test('panel web: cada rol ve solo sus secciones y todas abren sin errores (Ley 2
   const errors = await start(page);
   const expected: Record<string, RegExp[]> = {
     Majo: [/^Inicio/, /^Verificaciones/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Almacenes/, /^Transportistas/, /^Cobros/, /^Catálogo/, /^Reglas|^Configuración/, /^Reportes/, /^Mensajes de ayuda/, /^Reclamos|^Libro/, /^Auditoría/, /^Equipo/],
-    Lucía: [/^Inicio/, /^Verificaciones/, /^Almacenes/, /^Transportistas/, /^Usuarios/],
+    Lucía: [/^Inicio/, /^Verificaciones/, /^Almacenes/, /^Transportistas/, /^Usuarios/, /^Publicaciones/],
     Diana: [/^Inicio/, /^Envíos/, /^Usuarios/, /^Publicaciones/, /^Pedidos/, /^Mensajes de ayuda/, /^Reclamos|^Libro/],
     Ana: [/^Inicio/, /^Reportes/],
   };
@@ -190,7 +227,16 @@ test('fotos de la cosecha: el agricultor pone varias fotos a su publicación y e
   // la segunda pasa a ser la portada
   await sheet.getByRole('button', { name: 'Usar la foto 2 de portada' }).click();
   await sheet.getByRole('button', { name: 'Guardar cambios' }).click();
-  await expect(f.getByText('Guardamos los cambios.')).toBeVisible();
+  // fotos nuevas: se revisan antes de volver al catálogo
+  await expect(f.getByText('Guardamos el cambio. Como cambiaste fotos o precio, se revisa antes de volver al catálogo.')).toBeVisible();
+  await expect(card.getByText('En revisión')).toBeVisible();
+  const w = await webPanel(page, /Diana/);
+  await w.locator('aside.side').getByRole('button', { name: /^Publicaciones/ }).click();
+  await w.getByRole('row', { name: /Papa amarilla.*Wilber/ }).filter({ hasText: /cambió fotos o precio/ }).first().click();
+  await expect(w.locator('.wphotos figure')).toHaveCount(2);
+  await tap(w, 'Aprobar y publicar');
+  await expect(w.getByText('Aprobada y publicada: ya se ve en el catálogo.')).toBeVisible();
+  await page.getByRole('tab', { name: /Celulares/ }).click();
   await expect(card.getByRole('button', { name: 'Editar', exact: true })).toBeVisible();
   // Doña Charo ve las dos fotos de Wilber
   await b.getByLabel('Buscar productos').fill('papa');
