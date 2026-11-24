@@ -292,7 +292,6 @@ export function mlReview(w: World, l: Listing, inputs: MlPhotoInput[], m: MlMode
   if (photos.some(p => p.match === 'SI' && /variedad/.test(p.note))) notes.push('El modelo reconoce el producto, pero distingue mal las variedades (amarilla, blanca, nativa): confírmalo en la foto.');
   if (photos.some(p => /catálogo/.test(p.note))) notes.push('Una foto parece sacada de internet: pide una foto real de la cosecha, tomada con la app.');
   if (photos.some(p => p.match === 'SIN_ANALIZAR')) notes.push(photos.every(p => p.match === 'SIN_ANALIZAR') ? 'No hubo fotos que analizar: decide mirando la publicación.' : 'Hay fotos que el modelo no analizó: míralas tú.');
-  if (l.photoIds.some(id => id.startsWith('ph-gal-'))) notes.push('Hay fotos elegidas de la galería del celular (no tomadas con la app): pueden ser de otra fecha o de internet.');
   if (prod.id === 'olluco' || prod.id === 'oca' || prod.id === 'chuno') notes.push(`El modelo conoce poco ${name === 'chuño' ? 'el chuño' : `la ${name}`} (cultivo andino): su opinión pesa menos.`);
 
   const farmerMessage = farmerHint(photos, rules.farmerMessage, name);
