@@ -8,7 +8,7 @@ import { useMemo, useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { reg } from './registry';
 import { useApp, type AppCtx } from '../ctx';
-import { Icon, Btn, Inp, Sel, Photo, Badge, Stars } from '../ui/kit';
+import { Icon, Btn, Inp, Sel, Photo, Badge, Stars, Spinner } from '../ui/kit';
 import { Mark, BrandRow } from '../ui/brand';
 import { product, PRODUCTS, suggestedPricePerKg, UNIT_LABEL } from '@mesagri/shared/catalog';
 import { orgStats, pricePerKg, visibleListing } from '@mesagri/shared/queries';
@@ -28,6 +28,9 @@ import { appUrl, LOCAL } from '../routes';
 import { docPdf } from '../pdf';
 import type { World, Org, User, VerifCase, SubOrder, Dispute, Listing, AdminRole, Complaint, ReviewVerdict, ListingReview } from '@mesagri/shared/types';
 import { VERDICT_LABEL } from '@mesagri/shared/review';
+import { ML_DECISION_LABEL, ML_MATCH_LABEL, mlHeadline, reviewVerdict } from '@mesagri/shared/ml';
+import type { MlDecision, MlMatch, MlSee } from '@mesagri/shared/types';
+import { compressImage } from '../media';
 import { AccountTools, OrderDetail, ProofTable, payState, listingPill, listingTitle } from './admin3';
 import { paymentStrikes, ticketNeedsReply } from '@mesagri/shared/queries';
 
@@ -671,7 +674,12 @@ function OrgCard({ o }: { o: Org }) {
 const VERDICT_TONE: Record<ReviewVerdict, '' | 'warn' | 'danger'> = { OK: '', OBSERVAR: 'warn', RECHAZAR: 'danger' };
 const CAUSE_LABEL: Record<ListingReview['cause'], string> = { NUEVA: 'Nueva', CAMBIO: 'Cambió fotos o precio', CORRECCION: 'Corregida' };
 function reasonOf(w: World, l: Listing): [string, 'warn' | 'danger' | 'gray' | ''] {
-  if (l.status === 'IN_REVIEW' && l.review) return [`${VERDICT_LABEL[l.review.auto.verdict]}${l.review.ai === 'PENDIENTE' ? ' · IA mirando' : l.review.ai === 'LISTA' ? ' · IA' : ''}`, (VERDICT_TONE[l.review.auto.verdict] || '') as any];
+  if (l.status === 'IN_REVIEW' && l.review) {
+    const r = l.review;
+    if (r.mlState === 'LISTA' && r.ml) return [`${ML_DECISION_LABEL[r.ml.decision]} · ML`, (VERDICT_TONE[reviewVerdict(r)] || '') as any];
+    if (r.mlState === 'PENDIENTE') return ['El modelo mira las fotos…', 'gray'];
+    return [`${VERDICT_LABEL[r.auto.verdict]}${r.ai === 'PENDIENTE' ? ' · IA mirando' : r.ai === 'LISTA' ? ' · IA' : ''}`, (VERDICT_TONE[r.auto.verdict] || '') as any];
+  }
   if (l.reviewReason) return [/RN-23|rinde/.test(l.reviewReason) ? 'Cantidad poco creíble' : l.reviewReason, 'warn'];
   const f: string[] = l.flags ?? [];
   const price = f.find(x => x.startsWith('Precio'));
@@ -679,18 +687,104 @@ function reasonOf(w: World, l: Listing): [string, 'warn' | 'danger' | 'gray' | '
   if (f.length) return [f[0], 'gray'];
   return ['Revisión', 'gray'];
 }
-/** ¿Está activa la IA en el servidor? (en la versión sin internet, no hay) */
-function useAiInfo(A: AppCtx): { ai: boolean; model?: string | null; today?: number; dailyMax?: number } | undefined {
-  const [info, setInfo] = useState<{ ai: boolean; model?: string | null; today?: number; dailyMax?: number }>();
+type ReviewInfo = { ai: boolean; model?: string | null; today?: number; dailyMax?: number; ml?: boolean; mlModel?: string | null; mlToday?: number; mlLastMs?: number | null };
+/** ¿Están el modelo de ML y la IA en el servidor? (en la versión sin internet, el modelo corre en la computadora si está) */
+function useAiInfo(A: AppCtx): ReviewInfo | undefined {
+  const [info, setInfo] = useState<ReviewInfo>();
   useEffect(() => {
     let on = true;
-    if (LOCAL) { setInfo({ ai: false }); return; }
+    if (LOCAL) { void import('../vision/clip').then(m => m.mlAvailable()).then(ml => { if (on) setInfo({ ai: false, ml }); }).catch(() => { if (on) setInfo({ ai: false, ml: false }); }); return () => { on = false; }; }
     (async () => {
       try { const token = await A.store.sessions.token(A.me!.id); const r = await api<any>('/review/info', { token, timeoutMs: 8000 }); if (on) setInfo(r); } catch { /* sin datos */ }
     })();
     return () => { on = false; };
   }, []);
   return info;
+}
+const ML_TONE: Record<MlDecision, '' | 'warn' | 'danger'> = { PUBLICAR: '', REVISAR: 'warn', NO_PUBLICAR: 'danger' };
+const MATCH_ICON: Record<MlMatch, [string, string]> = { SI: ['circle-check', 'var(--forest)'], DUDA: ['triangle-alert', '#9A6B00'], NO: ['circle-x', 'var(--danger)'], SIN_ANALIZAR: ['circle-question-mark', 'var(--moss)'] };
+const secs = (ms: number) => (ms / 1000).toFixed(ms < 10_000 ? 1 : 0).replace('.', ',');
+/** Barras de lo que el modelo ve en una foto (las tres etiquetas más probables). */
+function SeesBars({ sees }: { sees: MlSee[] }) {
+  return (
+    <div className="mlbars">{sees.map(x => (
+      <div key={x.id} className="mlbar"><span className="lab">{x.es}</span><span className="tr"><i style={{ width: `${Math.max(2, x.p)}%` }} /></span><span className="v">{x.p} %</span></div>
+    ))}</div>
+  );
+}
+/** Primer filtro con Machine Learning: qué ve el modelo en cada foto, la recomendación y por qué. */
+function MlReviewCard({ l, onUseMessage }: { l: Listing; onUseMessage: (m: string) => void }) {
+  const r = l.review!;
+  const ml = r.ml;
+  const name = product(l.productId).name;
+  const head = <h2 style={{ margin: 0 }}><Icon n="brain-circuit" s="1em" /> Primer filtro con Machine Learning</h2>;
+  if (r.mlState === 'ERROR' || (!ml && r.mlState !== 'PENDIENTE')) return <div className="wcard">{head}<p className="wnote">{r.mlNote ?? 'El modelo todavía no miró esta publicación.'}</p></div>;
+  if (!ml || r.mlState === 'PENDIENTE') return <div className="wcard">{head}<p className="row g8" style={{ margin: '12px 0 0', alignItems: 'center' }}><Spinner /> El modelo está mirando las fotos…</p></div>;
+  const done = ml.photos.filter(p => p.match !== 'SIN_ANALIZAR').length;
+  return (
+    <div className="wcard mlcard" data-decision={ml.decision}>
+      <div className="row between wrap g8">{head}<span className="row g8"><Pill tone={ML_TONE[ml.decision]}>{ML_DECISION_LABEL[ml.decision]}</Pill>{done > 0 && <Pill tone="gray">seguridad {ml.confidence} %</Pill>}</span></div>
+      <p className={'mlhead ' + ml.decision.toLowerCase()}>{mlHeadline(ml, name)}</p>
+      {ml.photos.length > 0 && <div className="mlphotos">{ml.photos.map(p => (
+        <div key={p.photoId} className="mlph">
+          <div className="photo"><Photo id={p.photoId} /></div>
+          <div style={{ minWidth: 0 }}>
+            <div className="row g8" style={{ alignItems: 'center' }}><span style={{ color: MATCH_ICON[p.match][1], display: 'inline-flex' }}><Icon n={MATCH_ICON[p.match][0]} s="1.15em" /></span><b>{p.n === 1 ? 'Portada' : `Foto ${p.n}`} · {ML_MATCH_LABEL[p.match]}</b></div>
+            <div className="cap" style={{ marginTop: '2px' }}>{p.note}</div>
+            {p.sees.length > 0 && <SeesBars sees={p.sees} />}
+          </div>
+        </div>
+      ))}</div>}
+      <h3 className="mlh3">Por qué</h3>
+      <table className="wtable"><tbody>{ml.reasons.filter(c => !/^foto\d/.test(c.key)).map((c, i) => (
+        <tr key={c.key + i}><td style={{ width: '1.6em' }}><span style={{ color: c.ok === true ? 'var(--forest)' : c.ok === false ? 'var(--danger)' : '#9A6B00' }}><Icon n={c.ok === true ? 'circle-check' : c.ok === false ? 'circle-x' : 'triangle-alert'} s="1.1em" /></span></td><td><b>{c.label}</b><div className="cap">{c.detail}</div></td></tr>
+      ))}</tbody></table>
+      {ml.notes.length > 0 && <><h3 className="mlh3">Notas para el equipo</h3><ul className="mlnotes">{ml.notes.map((n, i) => <li key={i}>{n}</li>)}</ul></>}
+      {ml.farmerMessage && <p className="wnote" style={{ marginBottom: 0 }}><b>Mensaje sugerido para el agricultor:</b> {ml.farmerMessage} <button className="linkbtn" style={{ padding: 0, minHeight: 0 }} onClick={() => onUseMessage(ml.farmerMessage!)}>Usar este mensaje</button></p>}
+      <p className="wnote" style={{ marginBottom: 0 }}>Modelo {ml.model}, en {LOCAL ? 'esta computadora' : 'el servidor de Mesagri'} (sin costo por foto){done ? ` · ${done} ${done === 1 ? 'foto' : 'fotos'} en ${secs(ml.ms ?? 0)} s` : ''}. El modelo recomienda; la decisión es del equipo.</p>
+    </div>
+  );
+}
+/** Probar el modelo con cualquier foto: qué ve y si muestra el producto elegido (no guarda nada). */
+function MlTry() {
+  const A = useApp();
+  const inp = useRef<HTMLInputElement>(null);
+  const [pid, setPid] = useState('cebolla_roja');
+  const [src, setSrc] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<{ match: MlMatch; declared: number; sees: MlSee[]; white: number; light: number; sharp: number }>();
+  const run = async (data: string, productId: string) => {
+    setBusy(true); setRes(undefined);
+    try {
+      if (LOCAL) { const m = await import('../vision/clip'); setRes(await m.tryPhotoLocal(data, productId)); }
+      else { const token = await A.store.sessions.token(A.me!.id); setRes(await api<any>('/review/ml/try', { token, body: { dataUrl: data, productId }, timeoutMs: 90_000 })); }
+    } catch (e: any) { A.toast(e?.message ?? 'No se pudo probar la foto.', 'err'); }
+    setBusy(false);
+  };
+  const pick = async (f?: File | null) => {
+    if (!f) return;
+    try { const d = await compressImage(f, 1280, 600_000); setSrc(d); void run(d, pid); } catch { A.toast('No pudimos leer esa foto.', 'err'); }
+  };
+  const pname = product(pid).name.toLowerCase();
+  return (
+    <div className="stack">
+      <p className="wnote" style={{ marginTop: 0 }}>Elige qué dice la publicación y sube cualquier foto: el modelo dice qué ve y si muestra ese producto. No se guarda nada.</p>
+      <Sel label="La publicación dice" value={pid} onChange={(v) => { setPid(v); if (src) void run(src, v); }} options={PRODUCTS.map(p => ({ v: p.id, l: p.name }))} />
+      <div className="row g8 wrap"><Btn sm kind="sec" icon="image" loading={busy} onClick={() => inp.current?.click()}>{src ? 'Probar otra foto' : 'Elegir una foto'}</Btn></div>
+      <input ref={inp} type="file" accept="image/*" className="sr" tabIndex={-1} onChange={(e: any) => { void pick(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} />
+      {src && <div className="mlph" style={{ alignItems: 'flex-start' }}>
+        <div className="photo"><img src={src} alt="Foto de prueba" /></div>
+        <div style={{ minWidth: 0 }}>
+          {busy && <p className="row g8" style={{ margin: 0, alignItems: 'center' }}><Spinner /> El modelo está mirando la foto…</p>}
+          {res && <>
+            <div className="row g8" style={{ alignItems: 'center' }}><span style={{ color: MATCH_ICON[res.match][1], display: 'inline-flex' }}><Icon n={MATCH_ICON[res.match][0]} s="1.2em" /></span><b>{res.match === 'SI' ? `Sí muestra ${pname}` : res.match === 'NO' ? `No muestra ${pname}` : `No se distingue bien si es ${pname}`}</b></div>
+            <div className="cap">{pname}: {res.declared} %{res.white >= 90 ? ' · parece foto de catálogo (fondo blanco)' : ''}{res.light < 45 ? ' · foto oscura' : ''}</div>
+            <SeesBars sees={res.sees} />
+          </>}
+        </div>
+      </div>}
+    </div>
+  );
 }
 function AutoReviewCard({ l, onUseMessage }: { l: Listing; onUseMessage: (m: string) => void }) {
   const A = useApp();
@@ -727,7 +821,9 @@ function Moderation() {
   const act = async (decision: 'APPROVE' | 'REJECT' | 'PAUSE' | 'REMOVE') => {
     if (!l) return;
     if (decision === 'REMOVE' && !await A.confirm({ title: '¿Eliminar esta publicación?', text: 'Sale del catálogo y se borran sus fotos. No vuelve (el agricultor puede publicar otra). Sus pedidos en curso siguen.', ok: 'Eliminar', danger: true })) return;
-    if (decision === 'APPROVE' && l.status === 'IN_REVIEW' && l.review?.auto.verdict === 'RECHAZAR' && !await A.confirm({ title: '¿Publicarla igual?', text: `La revisión automática dice «${VERDICT_LABEL.RECHAZAR.toLowerCase()}»: ${l.review.auto.summary}`, ok: 'Sí, publicar' })) return;
+    if (decision === 'APPROVE' && l.status === 'IN_REVIEW' && l.review?.mlState === 'LISTA' && l.review.ml?.decision === 'NO_PUBLICAR') {
+      if (!await A.confirm({ title: '¿Publicarla igual?', text: `El modelo de Machine Learning recomienda no publicarla: ${mlHeadline(l.review.ml, product(l.productId).name)}`, ok: 'Sí, publicar' })) return;
+    } else if (decision === 'APPROVE' && l.status === 'IN_REVIEW' && l.review?.auto.verdict === 'RECHAZAR' && !await A.confirm({ title: '¿Publicarla igual?', text: `La revisión automática dice «${VERDICT_LABEL.RECHAZAR.toLowerCase()}»: ${l.review.auto.summary}`, ok: 'Sí, publicar' })) return;
     const was = l.status;
     const r = A.act('LISTING_MODERATE', { listingId: l.id, decision, reason: decision === 'APPROVE' ? '' : msg }, { quiet: true });
     if (!r.ok) { A.toast(r.error!.message, 'err'); return; }
@@ -744,9 +840,12 @@ function Moderation() {
   const inReview = l?.status === 'IN_REVIEW';
   const flagged = l ? queue.some(x => x.id === l.id) : false;
   const farm = l?.farmId ? w.farms[l.farmId] : undefined;
-  const aiLine = LOCAL ? 'Versión sin internet: revisión por reglas y luego el equipo.' : ai === undefined ? 'Primero la revisión automática y luego el equipo: recién ahí se publica.' : ai.ai ? `IA activa (${ai.model}) · ${ai.today ?? 0} de ${ai.dailyMax} revisiones hoy · luego decide el equipo` : 'IA no configurada (ANTHROPIC_API_KEY en Render): revisión por reglas y luego el equipo.';
+  const aiLine = ai === undefined ? 'Primero el filtro automático y luego el equipo: recién ahí se publica.'
+    : `${ai.ml ? `Machine Learning activo${LOCAL ? ' en esta computadora' : ` · ${ai.mlToday ?? 0} revisadas hoy`}` : LOCAL ? 'Versión sin internet: revisión por reglas' : 'Sin modelo de ML: revisión por reglas'}${ai.ai ? ` · IA (${ai.model})` : ''} · luego decide el equipo`;
+  const [showTry, setShowTry] = useState(false);
   return (
-    <WebFrame title="Publicaciones" sub={aiLine} right={<WSearch value={q} onInput={setQ} placeholder="Buscar producto o agricultor" />}>
+    <WebFrame title="Publicaciones" sub={aiLine} right={<div className="row g8" style={{ alignItems: 'center' }}>{ai?.ml && <Btn sm kind="sec" icon="flask-conical" onClick={() => setShowTry(!showTry)}>Probar el modelo</Btn>}<WSearch value={q} onInput={setQ} placeholder="Buscar producto o agricultor" /></div>}>
+      {showTry && <div className="wcard" style={{ marginBottom: '14px' }}><div className="row between"><h2 style={{ margin: 0 }}><Icon n="flask-conical" s="1em" /> Probar el modelo con una foto</h2><button className="linkbtn" onClick={() => setShowTry(false)}>Cerrar</button></div><MlTry /></div>}
       <Tabs value={tab} onChange={(t) => { setTab(t); setSel(t === 'Q' ? queue[0]?.id : undefined); }} options={[['Q', `Por revisar (${queue.length})`], ['ALL', 'Todas las publicaciones']]} />
       <div className="split">
         <div className="wcard">
@@ -772,7 +871,8 @@ function Moderation() {
                 {l.reviewReason && <tr><td>{l.status === 'PAUSED' ? 'Cambios pedidos' : 'Motivo'}</td><td className="r"><b>{l.reviewReason}</b></td></tr>}
               </tbody></table>
             </div>
-            {l.review && (inReview || l.review.ai === 'LISTA') && <AutoReviewCard l={l} onUseMessage={setMsg} />}
+            {l.review && (inReview || l.review.mlState === 'LISTA') && (l.review.ml || l.review.mlState) && <MlReviewCard l={l} onUseMessage={setMsg} />}
+            {l.review && (inReview || l.review.ai === 'LISTA') && (!(l.review.ml || l.review.mlState) || l.review.ai) && <AutoReviewCard l={l} onUseMessage={setMsg} />}
             {l.status !== 'REMOVED' ? <div className="wcard">
               <h2>{inReview ? 'Tu decisión' : 'Acción'}</h2>
               <Inp area value={msg} onInput={setMsg} placeholder={inReview ? 'Qué debe corregir (lo lee y lo escucha el agricultor): foto que no es del producto, precio por saco puesto por kilo…' : flagged ? ask : 'Motivo (el agricultor lo lee): foto que no es del producto, precio engañoso, producto prohibido…'} label="Mensaje al agricultor" />
@@ -780,7 +880,7 @@ function Moderation() {
                 {inReview && <Btn sm kind="dark" icon="circle-check" onClick={() => act('APPROVE')}>Aprobar y publicar</Btn>}
                 {!inReview && l.status !== 'ACTIVE' && l.status !== 'SOLD_OUT' && <Btn sm kind="dark" onClick={() => act('APPROVE')}>Volver a mostrar</Btn>}
                 {!inReview && flagged && l.status === 'ACTIVE' && <Btn sm kind="dark" onClick={() => act('APPROVE')}>Aprobar</Btn>}
-                {l.status !== 'PAUSED' && <Btn sm kind="sec" onClick={() => { if (!msg.trim()) { if (l.review?.auto.farmerMessage) setMsg(l.review.auto.farmerMessage); else if (flagged) setMsg(`${ask} Corrígelo y vuelve a enviarla.`); else A.toast('Escribe qué debe corregir: el agricultor lo va a leer.', 'warn'); } else act('PAUSE'); }}>{inReview ? 'Pedir cambios' : 'Pausar y pedir corrección'}</Btn>}
+                {l.status !== 'PAUSED' && <Btn sm kind="sec" onClick={() => { if (!msg.trim()) { const sug = l.review?.ml?.farmerMessage ?? l.review?.auto.farmerMessage; if (sug) setMsg(sug); else if (flagged) setMsg(`${ask} Corrígelo y vuelve a enviarla.`); else A.toast('Escribe qué debe corregir: el agricultor lo va a leer.', 'warn'); } else act('PAUSE'); }}>{inReview ? 'Pedir cambios' : 'Pausar y pedir corrección'}</Btn>}
                 {l.status !== 'REJECTED' && <Btn sm kind="secd" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } act('REJECT'); }}>{inReview ? 'Rechazar' : 'Ocultar'}</Btn>}
                 <Btn sm kind="danger" icon="trash" onClick={() => { if (!msg.trim()) { A.toast('Escribe el motivo: el agricultor lo va a leer.', 'warn'); return; } void act('REMOVE'); }}>Eliminar</Btn>
               </div>

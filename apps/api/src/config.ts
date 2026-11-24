@@ -168,6 +168,18 @@ export const CONFIG = {
     /** fotos que mira por publicación (las primeras) */
     maxPhotos: num('AI_REVIEW_MAX_PHOTOS', 3),
   },
+  /**
+   * Primer filtro con Machine Learning: un modelo de visión (CLIP, en models/clip-vit-b32) mira las
+   * fotos de cada publicación en este mismo servidor, sin costo por foto. ML_REVIEW=false lo apaga.
+   */
+  mlReview: {
+    enabled: bool('ML_REVIEW', true),
+    dir: (env('ML_MODEL_DIR', '') ?? '').trim(),
+    /** fotos que mira por publicación (todas: la app deja hasta 5) */
+    maxPhotos: num('ML_REVIEW_MAX_PHOTOS', 5),
+    /** suelta el modelo de la memoria tras este tiempo sin publicaciones (ms; 0 = nunca) */
+    idleUnloadMs: num('ML_IDLE_UNLOAD_MS', 10 * 60_000),
+  },
   /** Firma de los tokens de acceso (JWT HS256, 15 minutos). */
   jwtSecret: env('JWT_SECRET', 'mesagri-desarrollo-cambiar-en-produccion')!,
   accessTtlSeconds: num('ACCESS_TTL_SECONDS', 15 * 60),

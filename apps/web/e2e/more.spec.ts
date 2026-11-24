@@ -24,7 +24,7 @@ test('publicar con la voz: la frase pasa sola a «Revisa y publica», el equipo 
   await expect(f.getByRole('button', { name: 'Publicar', exact: true })).toBeDisabled();
   await f.getByRole('button', { name: 'Usar foto de ejemplo: Foto de la cosecha' }).first().click();
   await expect(f.getByText('Con foto')).toBeVisible();
-  await expect(f.getByText(/Antes de verse en el catálogo, tu publicación la revisa la IA/)).toBeVisible();
+  await expect(f.getByText(/Antes de verse en el catálogo, el sistema de Mesagri revisa que tus fotos muestren tu producto/)).toBeVisible();
   await tap(f, 'Publicar', true);
   await expect(screen(f)).toHaveAttribute('data-screen', 'A-09');
   await expect(f.getByText('50 kg · quedan 50 kg')).toBeVisible();

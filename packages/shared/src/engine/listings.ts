@@ -4,6 +4,7 @@
 import type { Listing, Unit, ListingReview, AutoReview, ReviewCheck, ReviewVerdict } from '../types';
 import { on, fail, audit, notify, requireMember, requireAdmin, requireActive, getOrg, must, type Ctx } from './core';
 import { rulesReview, mergeReviews, VERDICT_LABEL } from '../review';
+import { cleanMl, mlHeadline, ML_DECISION_LABEL } from '../ml';
 import { product, suggestedPricePerKg, unitKgFor } from '../catalog';
 import { farmerLimit, priceDeviation, plausibility, r3 } from '../rules';
 import { activeListings, overdueStatement } from '../queries';
@@ -20,8 +21,9 @@ function cleanTiers(x: unknown): { minKg: number; price: number }[] | undefined 
 const COUNT_UNITS: Unit[] = ['saco', 'arroba', 'jaba', 'atado'];
 
 /**
- * Toda publicación se revisa antes de verse: primero la revisión automática (reglas aquí; la IA la
- * completa en el servidor con LISTING_AI_REVIEW) y luego el equipo (LISTING_MODERATE). Mientras
+ * Toda publicación se revisa antes de verse: primero la revisión automática (reglas aquí; el modelo
+ * de Machine Learning mira las fotos en el servidor y lo anota con LISTING_ML_REVIEW; si hay clave de
+ * Anthropic, también la IA con LISTING_AI_REVIEW) y luego el equipo (LISTING_MODERATE). Mientras
  * tanto no aparece en el catálogo; los pedidos que ya tenía siguen su curso.
  */
 function sendToReview(c: Ctx, l: Listing, cause: ListingReview['cause']) {
@@ -37,7 +39,7 @@ function sendToReview(c: Ctx, l: Listing, cause: ListingReview['cause']) {
   notify(c, 'ADMIN', 'SYSTEM', cause === 'NUEVA' ? 'Publicación para revisar' : cause === 'CORRECCION' ? 'Publicación corregida para revisar' : 'Cambio en una publicación para revisar',
     `${o?.name ?? ''}: ${what} · ${VERDICT_LABEL[review.auto.verdict].toLowerCase()}`, { screen: 'W-06', params: { id: l.id } });
   notify(c, l.orgId, 'SYSTEM', cause === 'CAMBIO' ? 'Revisamos tu cambio' : 'Tu publicación está en revisión',
-    `${what}: primero la revisa la IA de Mesagri y después nuestro equipo. Te avisamos cuando ya la vean los compradores.`, { screen: 'A-09' });
+    `${what}: primero el sistema de Mesagri mira tus fotos y después nuestro equipo. Te avisamos cuando ya la vean los compradores.`, { screen: 'A-09' });
 }
 
 /** La revisión de la IA que manda el servidor: solo campos conocidos y textos cortos. */
@@ -153,7 +155,11 @@ on('LISTING_EDIT', (c) => {
   if (l.status === 'IN_REVIEW') {
     // sigue en la cola: si cambiaron las fotos es otra revisión (la IA las vuelve a mirar)
     if (photosChanged) sendToReview(c, l, l.review?.cause ?? 'NUEVA');
-    else if (l.review) l.review.auto = l.review.ai === 'LISTA' ? l.review.auto : rulesReview(c.w, l, c.t);
+    else if (l.review) {
+      l.review.auto = l.review.ai === 'LISTA' ? l.review.auto : rulesReview(c.w, l, c.t);
+      // el primer filtro junta fotos y reglas: con otro precio o cantidad, se vuelve a calcular
+      if (l.price !== before.price || l.qtyTotal * l.unitKg !== before.kg) { delete l.review.ml; delete l.review.mlState; delete l.review.mlNote; }
+    }
   } else if ((l.status === 'ACTIVE' || l.status === 'SOLD_OUT') && (photosChanged || priceChanged || tooMuch)) {
     sendToReview(c, l, 'CAMBIO');
     return { status: l.status, review: true };
@@ -250,4 +256,36 @@ on('LISTING_AI_REVIEW', (c) => {
       `${c.w.orgs[l.orgId]?.name ?? ''}: ${product(l.productId).name} · ${r.auto.summary.slice(0, 140)}`, { screen: 'W-06', params: { id: l.id } });
   }
   return { ok: true, verdict: r.auto.verdict };
+});
+
+/**
+ * Primer filtro con Machine Learning (solo el servidor; en la demo sin internet, el navegador): qué
+ * ve el modelo en cada foto, si muestra el producto y la recomendación para el equipo. No publica ni
+ * rechaza: eso lo decide el equipo (W-06).
+ */
+on('LISTING_ML_REVIEW', (c) => {
+  if (c.a.id !== 'system') fail('FORBIDDEN', 'Esta revisión la hace solo el servidor.');
+  const l = must(c.w.listings[c.e.p.listingId], 'NOT_FOUND', 'No encontramos la publicación.');
+  const r = l.review;
+  // otra versión de la publicación (cambió después de pedir la revisión): este resultado ya no vale
+  if (!r || r.queuedAt !== Number(c.e.p.queuedAt)) return { stale: true };
+  if (c.e.p.photos !== undefined && String(c.e.p.photos) !== l.photoIds.join('|')) return { stale: true };
+  if (c.e.p.price !== undefined && Number(c.e.p.price) !== l.price) return { stale: true };
+  const state = String(c.e.p.state);
+  if (state === 'PENDIENTE') { r.mlState = 'PENDIENTE'; delete r.mlNote; return { ok: true }; }
+  if (state === 'ERROR') { r.mlState = 'ERROR'; delete r.ml; r.mlNote = String(c.e.p.note ?? '').trim().slice(0, 200) || 'El modelo no pudo mirar las fotos: quedó la revisión por reglas.'; return { ok: true }; }
+  if (state !== 'LISTA') fail('BAD_STATE', 'Estado de revisión no válido.');
+  const ml = cleanMl(c.e.p.ml, c.t);
+  r.ml = ml;
+  r.mlState = 'LISTA';
+  delete r.mlNote;
+  const what = product(l.productId).name;
+  const who = c.w.orgs[l.orgId]?.name ?? '';
+  audit(c, 'system', 'REVISIÓN ML', l.id, `${what} de ${who}: ${ML_DECISION_LABEL[ml.decision]} (seguridad ${ml.confidence} %) · ${ml.model}`);
+  if (ml.decision !== 'PUBLICAR') {
+    const live = l.status === 'ACTIVE' || l.status === 'SOLD_OUT';
+    notify(c, 'ADMIN', 'SYSTEM', live ? 'El modelo de ML marcó una publicación ya aprobada' : ml.decision === 'NO_PUBLICAR' ? 'El modelo de ML recomienda no publicar' : 'El modelo de ML pide revisar una publicación',
+      `${who}: ${what} · ${mlHeadline(ml, what).slice(0, 160)}`, { screen: 'W-06', params: { id: l.id } });
+  }
+  return { ok: true, decision: ml.decision };
 });

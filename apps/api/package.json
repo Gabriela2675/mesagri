@@ -22,8 +22,10 @@
     "@nestjs/websockets": "11.2.8",
     "hash-wasm": "4.12.0",
     "mysql2": "3.24.6",
+    "onnxruntime-node": "1.31.1",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
+    "sharp": "0.35.5",
     "socket.io": "4.8.4",
     "zod": "3.25.76"
   },

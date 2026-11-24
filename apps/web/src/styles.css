@@ -486,6 +486,23 @@ button.stat:hover { box-shadow: var(--elev2); }
 .wphotos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
 .wphotos figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .wphotos figcaption { font-size: 12.5px; color: var(--moss); text-align: center; }
+/* primer filtro con Machine Learning (W-06) */
+.mlhead { font-size: 15.5px; font-weight: 800; margin: 12px 0 4px; padding: 10px 12px; border-radius: 12px; background: var(--mint); color: var(--field); }
+.mlhead.revisar { background: var(--warnbg); color: var(--warn); }
+.mlhead.no_publicar { background: var(--dangerbg); color: var(--danger); }
+.mlphotos { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.mlph { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: start; }
+.mlph .photo { width: 92px; height: 92px; aspect-ratio: auto; border-radius: 12px; }
+.mlph .photo img { width: 100%; height: 100%; object-fit: cover; }
+.mlbars { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; max-width: 560px; }
+.mlbar { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(60px, 1fr) 3.2em; gap: 8px; align-items: center; font-size: 12.5px; color: var(--moss); }
+.mlbar .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mlbar .tr { display: block; height: 8px; border-radius: 6px; background: #eef1ec; overflow: hidden; }
+.mlbar .tr i { display: block; height: 100%; border-radius: 6px; background: var(--forest); }
+.mlbar .v { text-align: right; font-weight: 800; color: var(--ink, #1E3F20); }
+.mlh3 { font-size: 14px; font-weight: 800; margin: 14px 0 4px; }
+.mlnotes { margin: 0; padding-left: 1.2em; font-size: 13px; color: var(--moss); }
+.mlnotes li { margin: 3px 0; }
 .wmsg { background: #f2f5ee; border-radius: 12px; padding: 9px 12px; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
 .wmsg small { opacity: .75; font-size: 11.5px; }
 .tnum { font-variant-numeric: tabular-nums; }

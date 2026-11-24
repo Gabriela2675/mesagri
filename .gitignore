@@ -16,3 +16,10 @@ apps/android/build/
 # la firma del APK no se sube a repositorios (sí va en el paquete privado del proyecto)
 apps/android/firma/*.jks
 apps/android/firma/clave.env
+
+# modelos y datos de trabajo de scripts/ml (los pesos originales pesan 600 MB)
+scripts/ml/*.npz
+scripts/ml/*.pth
+scripts/ml/*.onnx
+# configuración de Playwright solo para una máquina
+apps/web/playwright.local.config.ts

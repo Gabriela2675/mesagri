@@ -35,7 +35,7 @@ interface LocalCred { salt: string; hash: string; temp: boolean; until?: number;
 interface Saved { v: 1; protocol: number; seedVersion?: string; epoch: string; seq: number; world: World; simNow: number; revoked: Record<string, number>; pw?: Record<string, LocalCred> }
 type Listener = (type: 'event' | 'reset', data: unknown) => void;
 
-const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK', 'VERIF_IDCHECK']);
+const SYSTEM_ONLY = new Set(['WORLD_INIT', 'CLOCK_ADVANCE', 'CLOCK_TICK', 'VERIF_IDCHECK', 'LISTING_AI_REVIEW', 'LISTING_ML_REVIEW']);
 const ID_RE = /^[A-Za-z0-9:_.-]{3,80}$/;
 const OTP_TTL = 5 * 60_000;
 const TICKET_TTL = 15 * 60_000;

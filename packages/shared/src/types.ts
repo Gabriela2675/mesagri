@@ -449,6 +449,47 @@ export interface ListingReview {
   approvedBy?: string;
   /** el equipo pidió cambios: al reactivarla vuelve a revisión */
   changesRequested?: boolean;
+  /** primer filtro con Machine Learning (modelo de visión en el servidor de Mesagri): ¿las fotos muestran el producto? */
+  ml?: MlReview;
+  /** el modelo está mirando las fotos, ya terminó o no pudo; sin valor = todavía no la miró (o no hay modelo) */
+  mlState?: 'PENDIENTE' | 'LISTA' | 'ERROR';
+  mlNote?: string;
+}
+
+/** ¿La foto muestra el producto declarado? SI · DUDA (no se distingue bien) · NO (muestra otra cosa) */
+export type MlMatch = 'SI' | 'DUDA' | 'NO' | 'SIN_ANALIZAR';
+/** Recomendación del primer filtro para el equipo */
+export type MlDecision = 'PUBLICAR' | 'REVISAR' | 'NO_PUBLICAR';
+/** Lo que el modelo ve en una foto: etiqueta y probabilidad (0 a 100). */
+export interface MlSee { id: string; es: string; p: number }
+export interface MlPhoto {
+  photoId: string;
+  /** número de la foto (1 = portada) */
+  n: number;
+  match: MlMatch;
+  /** probabilidad (0 a 100) de que muestre el producto declarado */
+  declared: number;
+  /** las tres etiquetas más probables */
+  sees: MlSee[];
+  /** qué se ve y por qué, en palabras simples */
+  note: string;
+}
+/** Resultado del primer filtro con Machine Learning (más las reglas de precio, cantidad y cosecha). */
+export interface MlReview {
+  at: number;
+  model: string;
+  decision: MlDecision;
+  /** qué tan seguro está el modelo (0 a 100) */
+  confidence: number;
+  photos: MlPhoto[];
+  /** por qué: lo que vio en cada foto y lo que dicen las reglas */
+  reasons: ReviewCheck[];
+  /** comentarios para el equipo */
+  notes: string[];
+  /** qué corregir, en palabras simples, para el agricultor */
+  farmerMessage?: string;
+  /** cuánto tardó (ms) */
+  ms?: number;
 }
 
 export interface Movement { at: number; listingId: string; kind: 'INIT' | 'RESERVE' | 'RELEASE' | 'CONSUME' | 'ADJUST'; qty: number; ref?: string }

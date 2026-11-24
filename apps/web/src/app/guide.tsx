@@ -57,7 +57,7 @@ const FLOWS: Flow[] = [
     id: 'voz', title: 'Publicar con la voz', sub: 'Flujo 2 · la frase pasa sola a la confirmación (corrige D-04)',
     steps: [
       { t: 'Wilber toca Publicar y dice (o escribe) una frase', dev: 'd1', user: 'u-wilber', s: 'A-10', done: w => newListing(w, 'org-wilber'), hint: 'Prueba «papitas amarillas, dos sacos, a dos setenta el kilo» y agrega una foto de la cosecha.' },
-      { t: 'Primero la revisión automática y luego Lucía en el panel: la aprueba y recién se publica', dev: 'web', user: 'u-lucia', s: w => { const l = Object.values(w.listings).find(x => x.orgId === 'org-wilber' && !seedWorld().listings[x.id] && x.status === 'IN_REVIEW'); return l ? ['W-06', { id: l.id }] : ['W-06']; }, done: w => Object.values(w.listings).some(l => l.orgId === 'org-wilber' && !seedWorld().listings[l.id] && (l.status === 'ACTIVE' || l.status === 'SOLD_OUT')), hint: 'La revisión mira fotos, precio y cantidad (con IA si el servidor tiene la clave). Puedes aprobar, pedir cambios o rechazar.' },
+      { t: 'Primero la revisión automática y luego Lucía en el panel: la aprueba y recién se publica', dev: 'web', user: 'u-lucia', s: w => { const l = Object.values(w.listings).find(x => x.orgId === 'org-wilber' && !seedWorld().listings[x.id] && x.status === 'IN_REVIEW'); return l ? ['W-06', { id: l.id }] : ['W-06']; }, done: w => Object.values(w.listings).some(l => l.orgId === 'org-wilber' && !seedWorld().listings[l.id] && (l.status === 'ACTIVE' || l.status === 'SOLD_OUT')), hint: 'Primero el modelo de Machine Learning mira si las fotos muestran el producto (y las reglas, el precio y la cantidad) y recomienda publicar o no, con el porqué. Puedes aprobar, pedir cambios o rechazar.' },
     ],
   },
   {

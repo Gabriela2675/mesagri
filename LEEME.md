@@ -135,7 +135,21 @@ transportista (quien maneja) y al almacén (representante):
 
 Ninguna publicación nueva aparece en el catálogo hasta pasar dos filtros:
 
-1. **Revisión automática.** Siempre corren las reglas: precio frente al de chacra y mayorista,
+1. **Primer filtro con Machine Learning (gratis, en el mismo servidor).** Un modelo de visión
+   (**CLIP ViT-B/32** de OpenCLIP, entrenado con 2 000 millones de imágenes con texto, cuantizado a
+   int8: carpeta `models/clip-vit-b32`) mira cada foto y decide si **muestra el producto declarado**:
+   «cebolla roja» con la foto de una botella de Gatorade sale **«no corresponde»** («Se ve una botella
+   de bebida (tipo Gatorade) (78 %), no cebolla roja»). Compara la foto con 103 etiquetas (los 19
+   productos del catálogo, otros productos del campo, botellas, personas, capturas de pantalla,
+   documentos, animales…), avisa si parece foto de catálogo o de internet (fondo blanco), si está
+   oscura o movida, y encuentra **fotos copiadas** de otro agricultor aunque estén recomprimidas o
+   achicadas (huella de la foto + el modelo). Junta eso con las reglas y le deja al equipo una
+   **recomendación** —**Se puede publicar**, **Revisar antes de publicar** o **No publicar**— con el
+   **porqué** (lo que vio en cada foto con sus porcentajes y lo que dicen las reglas), **notas para el
+   equipo** y un **mensaje sugerido para el agricultor**. Ninguna foto sale a otra empresa y no hay
+   costo por foto. En el panel, **«Probar el modelo»** muestra qué ve el modelo en cualquier foto.
+   Las fotos de ejemplo de la demo (dibujos) no se analizan. Detalles y pruebas: `scripts/ml/LEEME.md`.
+   Siempre corren también las reglas: precio frente al de chacra y mayorista,
    cantidad frente a lo que rinde la chacra, fotos (si hay, si son de la cámara de la app o de la
    galería, si ya están en la publicación de otro agricultor), fecha de cosecha e historial del
    agricultor. Si el servidor tiene **`ANTHROPIC_API_KEY`**, además una **IA (Claude, de
@@ -151,7 +165,16 @@ Ninguna publicación nueva aparece en el catálogo hasta pasar dos filtros:
    llega un aviso cuando se publica.
 
 Si después cambia las fotos o pone un precio fuera de rango, la publicación vuelve a revisión
-antes de mostrarse otra vez (sus pedidos en curso siguen). La IA ayuda; **decide una persona**.
+antes de mostrarse otra vez (sus pedidos en curso siguen). El modelo y la IA ayudan; **decide una
+persona**.
+
+**El modelo de ML en el servidor**: no necesita claves ni cuentas. Se carga la primera vez que hace
+falta (unos 60 MB de memoria propia; los pesos se leen del archivo) y se suelta tras 10 minutos sin
+publicaciones (`ML_IDLE_UNLOAD_MS`); cada foto tarda menos de un segundo en el plan gratis de Render.
+Cada revisión queda en la tabla `ml_reviews` y el vector y la huella de cada foto en
+`ml_photo_vectors`. `ML_REVIEW=false` lo apaga. En la **demo sin internet en la computadora**
+(`index.html?modo=demo` o `/panel`), el mismo modelo corre en el navegador (ONNX Runtime Web, carpeta
+`ml/` de la compilación); no va dentro del APK ni se guarda en el celular.
 
 **Activar la IA** (opcional): crea una cuenta en la consola de Anthropic (platform.claude.com),
 genera una clave de API y pégala **solo en Render → Environment** como `ANTHROPIC_API_KEY` (nunca en

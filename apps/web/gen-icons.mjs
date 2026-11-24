@@ -13,8 +13,8 @@ fast-forward rotate-ccw monitor sparkles megaphone tag external-link menu ellips
 tractor cloud-upload signal bike container thumbs-up headphones square-pen hourglass circle-x clipboard-check
 file-exclamation-point map-pinned undo-2 save notebook-pen calendar-clock circle-user circle-play pause audio-lines
 arrow-left trending-down zap eye-off scan-face aperture arrow-big-left arrow-big-right locate-fixed bot map-pin-check
-shield-alert image-off scan-search list-checks`.split(/\s+/).filter(Boolean);
-const dir = path.resolve('node_modules/lucide/dist/esm/icons');
+shield-alert image-off scan-search list-checks brain-circuit flask-conical`.split(/\s+/).filter(Boolean);
+const dir = path.resolve(fs.existsSync('node_modules/lucide') ? 'node_modules/lucide/dist/esm/icons' : '../../node_modules/lucide/dist/esm/icons');
 const out = {};
 for (const n of names) {
   const mod = await import(pathToFileURL(path.join(dir, n + '.mjs')).href);

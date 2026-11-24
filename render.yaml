@@ -63,6 +63,8 @@ services:
         sync: false
       - key: DNI_API_TOKEN
         sync: false
+      # El primer filtro con Machine Learning (modelo de visión en models/clip-vit-b32) corre en este
+      # mismo servidor, sin claves ni costo: no hay que configurar nada (ML_REVIEW=false lo apaga).
       # Revisión de publicaciones con IA (opcional; ver LEEME → «Revisión de cada publicación»).
       # La clave de Anthropic se pega solo aquí, en Render → Environment.
       - key: ANTHROPIC_API_KEY

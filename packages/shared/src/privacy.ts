@@ -146,7 +146,12 @@ export const MASKS: Record<string, Masker> = {
     return m;
   },
   /** publicaciones: la revisión interna (reglas, IA y mensajes del equipo) solo la ven el agricultor y el equipo */
-  listings: (l: Listing, _id, x) => (isAdmin(x) || !realOrg(x, l.orgId) || own(x, l.orgId) || (!l.review && !l.flags && l.reviewReason === undefined) ? l : without(l, 'review', 'flags', 'reviewReason')),
+  listings: (l: Listing, _id, x) => {
+    if (isAdmin(x) || !realOrg(x, l.orgId)) return l;
+    // el agricultor ve su revisión, pero no las notas internas del modelo para el equipo (pueden nombrar a otro agricultor)
+    if (own(x, l.orgId)) return l.review?.ml?.notes.length ? { ...l, review: { ...l.review, ml: { ...l.review.ml, notes: [] } } } : l;
+    return !l.review && !l.flags && l.reviewReason === undefined ? l : without(l, 'review', 'flags', 'reviewReason');
+  },
   /** chacras: el punto exacto y la referencia solo los ven el agricultor y el equipo (RN-17) */
   farms: (f: Farm, _id, x) => (isAdmin(x) || !realOrg(x, f.orgId) || own(x, f.orgId) || !f.place ? f : without(f, 'place')),
   cases: (c: VerifCase, _id, x) => {

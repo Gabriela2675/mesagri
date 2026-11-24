@@ -36,6 +36,7 @@ echo "==> App web autónoma (vite build --mode autonoma)"
 echo "==> Recursos y manifiesto"
 rm -rf "$OUT" && mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/assets"
 cp -r "$ROOT/apps/web/dist-app" "$OUT/assets/www"
+rm -rf "$OUT/assets/www/ml"   # el modelo de ML (100 MB) es solo para la demo en la computadora: no va al APK
 rm -f "$OUT/assets/www/sw.js"   # dentro del APK la app ya está en el celular: sin service worker
 cp "$HERE/conexion.html" "$OUT/assets/www/conexion.html"   # pantalla mientras conecta con el servidor
 sed -i "s/static final String VERSION = \"[^\"]*\"/static final String VERSION = \"$VERSION\"/" "$HERE/src/pe/mesagri/app/BuildInfo.java"

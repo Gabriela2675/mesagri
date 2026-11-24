@@ -729,6 +729,60 @@ describe('API de Mesagri', () => {
     CONFIG.aiReview.key = '';
   });
 
+  it('primer filtro con Machine Learning: el modelo mira las fotos en el servidor, recomienda y encuentra fotos copiadas', async () => {
+    const req = createRequire(path.resolve(process.cwd(), 'package.json'));
+    const ml = app.get(req('./dist/review/ml-review.js').MlListingReview) as import('../src/review/ml-review').MlListingReview;
+    const engine = app.get(req('./dist/core/engine.service.js').EngineService) as import('../src/core/engine.service').EngineService;
+    const { rows } = req('./dist/db/db.js') as typeof import('../src/db/db');
+    const sharp = req('sharp');
+    expect(ml.configured()).toBe(true);
+    ml.retryMs = 50;
+    const muestra = (f: string) => fs.readFileSync(path.resolve(process.cwd(), '../web/public/muestras', f));
+    const dataUrl = (b: Buffer, mime = 'image/jpeg') => `data:${mime};base64,${b.toString('base64')}`;
+    const wilber = await session('u-wilber');
+    // «cebolla roja» con la foto de un DNI: el modelo ve un documento, no cebolla
+    expect((await api().post('/api/v1/files').set('Authorization', 'Bearer ' + wilber).send({ id: 'ph-cam-ml-1', dataUrl: dataUrl(muestra('dni-frente.jpg')) })).status).toBe(201);
+    const pub = { id: 'e-api-ml-1', type: 'LISTING_PUBLISH', p: { orgId: 'org-wilber', listingId: 'l-api-ml', productId: 'cebolla_roja', unit: 'kg', unitKg: 1, qty: 100, price: 1.5, harvestDate: engine.simNow(), farmId: 'farm-wilber', photoIds: ['ph-cam-ml-1'] } };
+    expect((await api().post('/api/v1/sync/events').set('Authorization', 'Bearer ' + wilber).send({ events: [pub] })).body.results[0].ok).toBe(true);
+    for (let i = 0; i < 300 && engine.world.listings['l-api-ml'].review?.mlState !== 'LISTA'; i++) await new Promise(res => setTimeout(res, 100));
+    const l = engine.world.listings['l-api-ml'];
+    expect(l.status).toBe('IN_REVIEW');
+    expect(l.review).toMatchObject({ mlState: 'LISTA', ml: { decision: 'NO_PUBLICAR', model: 'CLIP ViT-B/32 (OpenCLIP, LAION-2B) · int8' } });
+    expect(l.review!.ml!.photos[0]).toMatchObject({ n: 1, match: 'NO' });
+    expect(l.review!.ml!.photos[0].sees[0].id).toBe('tarjeta');
+    expect(l.review!.ml!.photos[0].note).toMatch(/^Se ve un documento de identidad o tarjeta \(\d+ %\), no cebolla roja\.$/);
+    expect(l.review!.ml!.farmerMessage).toContain('no muestra tu cebolla roja');
+    expect(engine.world.notifs.some(x => x.to === 'ADMIN' && x.title === 'El modelo de ML recomienda no publicar')).toBe(true);
+    const log = await rows(engine.pool, 'SELECT decision, photos, error FROM ml_reviews WHERE listing_uuid = ?', ['l-api-ml']);
+    expect(log).toEqual([{ decision: 'NO_PUBLICAR', photos: 1, error: null }]);
+    // otra agricultora usa la misma foto, achicada y recomprimida: se reconoce como copiada (huella y modelo)
+    const justina = await session('u-justina');
+    const copia = await sharp(muestra('dni-frente.jpg')).resize(720).jpeg({ quality: 55 }).toBuffer();
+    expect((await api().post('/api/v1/files').set('Authorization', 'Bearer ' + justina).send({ id: 'ph-cam-ml-2', dataUrl: dataUrl(copia) })).status).toBe(201);
+    const pub2 = { id: 'e-api-ml-2', type: 'LISTING_PUBLISH', p: { orgId: 'org-justina', listingId: 'l-api-ml2', productId: 'papa_nativa', unit: 'kg', unitKg: 1, qty: 50, price: 3.5, harvestDate: engine.simNow(), farmId: 'farm-justina', photoIds: ['ph-cam-ml-2'] } };
+    expect((await api().post('/api/v1/sync/events').set('Authorization', 'Bearer ' + justina).send({ events: [pub2] })).body.results[0].ok).toBe(true);
+    for (let i = 0; i < 300 && engine.world.listings['l-api-ml2'].review?.mlState !== 'LISTA'; i++) await new Promise(res => setTimeout(res, 100));
+    const c = engine.world.listings['l-api-ml2'].review!.ml!;
+    expect(c.decision).toBe('NO_PUBLICAR');
+    expect(c.photos[0].note).toMatch(/^Es casi la misma foto que la de otra publicación/);
+    expect(c.notes[0]).toContain('Wilber');
+    // el panel sabe que el modelo está y puede probarlo con una foto suelta
+    const majo = await session('u-majo');
+    const info = await api().get('/api/v1/review/info').set('Authorization', 'Bearer ' + majo);
+    expect(info.body).toMatchObject({ ml: true, mlModel: 'CLIP ViT-B/32 (OpenCLIP, LAION-2B) · int8' });
+    expect(info.body.mlToday).toBeGreaterThanOrEqual(2);
+    const t = await api().post('/api/v1/review/ml/try').set('Authorization', 'Bearer ' + majo).send({ productId: 'papa_blanca', dataUrl: dataUrl(muestra('rostro-frente.jpg')) });
+    expect(t.status, JSON.stringify(t.body)).toBe(201);
+    expect(t.body).toMatchObject({ match: 'NO' });
+    expect(t.body.sees[0].id).toBe('persona');
+    expect((await api().post('/api/v1/review/ml/try').set('Authorization', 'Bearer ' + wilber).send({ productId: 'papa_blanca', dataUrl: dataUrl(muestra('rostro-frente.jpg')) })).status).toBe(403);
+    expect((await api().post('/api/v1/review/ml/try').set('Authorization', 'Bearer ' + majo).send({ productId: 'nada', dataUrl: dataUrl(muestra('rostro-frente.jpg')) })).status).toBe(422);
+    // el equipo decide: pide cambios con el mensaje sugerido
+    const ask = await api().post('/api/v1/sync/events').set('Authorization', 'Bearer ' + majo).send({ events: [{ id: 'e-api-ml-3', type: 'LISTING_MODERATE', p: { listingId: 'l-api-ml', decision: 'PAUSE', reason: l.review!.ml!.farmerMessage } }] });
+    expect(ask.body.results[0].ok).toBe(true);
+    expect(engine.world.listings['l-api-ml'].status).toBe('PAUSED');
+  });
+
   it('política de privacidad publicada (la pide Meta)', async () => {
     const r = await api().get('/privacidad');
     expect(r.status).toBe(200);

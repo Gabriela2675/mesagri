@@ -31,6 +31,7 @@ import { DniRegistry } from './identity/dni';
 import { PlacesController } from './places/places.controller';
 import { Geocoder } from './places/geocoder';
 import { AiListingReview } from './review/ai-review';
+import { MlListingReview } from './review/ml-review';
 import { ReviewController } from './review/review.controller';
 
 @ApiTags('Servidor')
@@ -49,7 +50,7 @@ class HealthController {
 @Global()
 @Module({
   imports: [JwtModule.register({ secret: CONFIG.jwtSecret, signOptions: { algorithm: 'HS256', issuer: 'mesagri' }, verifyOptions: { algorithms: ['HS256'], issuer: 'mesagri' } })],
-  providers: [EngineService, Commands, TeamAccounts, DniRegistry, Geocoder, AiListingReview, WhatsAppService, SmsService, AuthService, AuthGuard, SyncGateway],
+  providers: [EngineService, Commands, TeamAccounts, DniRegistry, Geocoder, AiListingReview, MlListingReview, WhatsAppService, SmsService, AuthService, AuthGuard, SyncGateway],
   controllers: [HealthController, AuthController, WhatsAppController, TeamController, SyncController, DemoController, FilesController, CatalogController, OrdersController, VerificationController, AdminController, StorageController, BillingController, ShippingController, IdentityController, PlacesController, ReviewController],
   exports: [EngineService, Commands, AuthService, AuthGuard],
 })

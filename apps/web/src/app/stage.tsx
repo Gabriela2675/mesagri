@@ -55,6 +55,8 @@ export function defaultUi(): UiState {
 
 const store = new Store(MODE);
 const photos = LOCAL ? localPhotos() : serverPhotos(store);
+// demo sin internet en la computadora: el primer filtro con Machine Learning corre en el navegador
+if (LOCAL && MODE !== 'app') void import('./local/mlreview').then(m => m.startLocalMl(photos)).catch(() => undefined);
 // fuera del escenario, la copia del mundo se pide con la sesión de quien usa el celular o el panel
 if (MODE !== 'stage') store.viewerUserId = loadUi(defaultUi(), UI_KEY).devices[0]?.userId;
 void store.start();

@@ -220,9 +220,9 @@ function ListingCard({ l }: { l: Listing }) {
 /** Dónde va la revisión: 1) automática (IA o reglas) · 2) equipo de Mesagri · 3) publicada. */
 function ReviewSteps({ l }: { l: Listing }) {
   const r = l.review;
-  const autoDone = !!r && r.ai !== 'PENDIENTE';
+  const autoDone = !!r && r.ai !== 'PENDIENTE' && r.mlState !== 'PENDIENTE';
   const steps: [string, 'done' | 'now' | 'todo'][] = [
-    [r?.ai === 'LISTA' ? 'Revisión de la IA' : 'Revisión automática', autoDone ? 'done' : 'now'],
+    [r?.mlState === 'LISTA' || r?.mlState === 'PENDIENTE' ? 'Revisión de tus fotos (sistema de Mesagri)' : r?.ai === 'LISTA' ? 'Revisión de la IA' : 'Revisión automática', autoDone ? 'done' : 'now'],
     ['Revisión del equipo de Mesagri', autoDone ? 'now' : 'todo'],
     ['Publicada en el catálogo', 'todo'],
   ];
@@ -454,7 +454,7 @@ function ConfirmPublish() {
     setBusy(false);
     if (!r.ok) return;
     A.patch(x => { x.flow = { ...x.flow, pub: undefined }; x.stack = [{ s: 'A-08' }, { s: 'A-09' }]; });
-    A.toast(!A.dev.online ? 'Guardamos tu publicación: se envía a revisión cuando vuelva la señal.' : 'Enviada a revisión: primero la revisa la IA de Mesagri y luego nuestro equipo. Te avisamos cuando ya la vean los compradores.', 'ok');
+    A.toast(!A.dev.online ? 'Guardamos tu publicación: se envía a revisión cuando vuelva la señal.' : 'Enviada a revisión: primero el sistema de Mesagri mira tus fotos y luego nuestro equipo. Te avisamos cuando ya la vean los compradores.', 'ok');
   };
   const edit = () => A.replace('A-10', { mode: 'form' });
   return (
@@ -484,7 +484,7 @@ function ConfirmPublish() {
         {(d.notes ?? []).map((n, i) => <div key={i} className="cap">• {n}</div>)}
         {dev.ask && <Note icon="triangle-alert" tone="warn">Tu precio se aleja {Math.round(Math.abs(dev.dev) * 100)} % del sugerido ({money(suggestedPricePerKg(d.productId))} por kg). Te pediremos confirmarlo (RN-29).</Note>}
         {pl && !pl.ok && <Note icon="triangle-alert" tone="warn">{fkg(totalKg)} pasa lo que rinden {String(farm!.areaHa).replace('.', ',')} ha de {p.name.toLowerCase()}: el equipo lo va a revisar con cuidado (RN-23).</Note>}
-        <Note icon="scan-search">Antes de verse en el catálogo, tu publicación la revisa la IA de Mesagri (fotos, precio y cantidad) y después nuestro equipo. Te avisamos cuando se publique.</Note>
+        <Note icon="scan-search">Antes de verse en el catálogo, el sistema de Mesagri revisa que tus fotos muestren tu producto (y el precio y la cantidad) y después nuestro equipo. Toma fotos reales de tu cosecha. Te avisamos cuando se publique.</Note>
         <Card tone="warn"><div className="row top g8"><Icon n="percent" /><div className="bodym">{left > 0 ? <><b>Tus primeras {A.w.settings.commission.freeSales} ventas no pagan comisión.</b> Te quedan {left}. Después, solo {pct(A.w.settings.commission.rate)} de lo que vendas.</> : <>Pagas {pct(A.w.settings.commission.rate)} de cada venta conforme, una vez al mes. Si no vendes, no pagas.</>}</div></div></Card>
       </div>
     </Screen>

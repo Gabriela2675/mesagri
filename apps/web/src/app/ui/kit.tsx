@@ -269,7 +269,8 @@ export function PhotoPick({ value, onChange, label, kind = 'producto', sample, s
   const useSample = async () => {
     const data = samplePhoto(kind, { label, ...(sample ?? {}) });
     if (!data) return;
-    const id = 'ph-' + uid();
+    // «ph-ej-»: dibujo de ejemplo de la demo (el modelo de ML no lo analiza)
+    const id = 'ph-ej-' + uid();
     await A.photos.put(id, data, { kind, userId: A.dev.userId });
     onChange(id);
   };
@@ -319,7 +320,7 @@ export function PhotosPick({ value, onChange, max = 3, label, kind = 'producto',
   const useSample = async () => {
     const data = samplePhoto(kind, { label, ...(sample ?? {}) });
     if (!data) return;
-    const id = 'ph-' + uid();
+    const id = 'ph-ej-' + uid();
     await A.photos.put(id, data, { kind, userId: A.dev.userId });
     onChange([...value, id]);
   };

@@ -19,7 +19,8 @@ function offlineApp(): Plugin {
       const files: string[] = [];
       const walk = (d: string) => { for (const f of fs.readdirSync(d)) { const p = path.join(d, f); if (fs.statSync(p).isDirectory()) walk(p); else files.push(path.relative(root, p).split(path.sep).join('/')); } };
       walk(root);
-      const list = files.filter(f => f !== 'sw.js').sort();
+      // el modelo de ML (ml/, 100 MB) no se guarda de antemano en el celular: solo lo usa la computadora
+      const list = files.filter(f => f !== 'sw.js' && !f.startsWith('ml/')).sort();
       const version = createHash('sha256').update(list.join('|') + fs.readFileSync(path.join(root, 'index.html'))).digest('hex').slice(0, 12);
       const tpl = fs.readFileSync(path.resolve(__dirname, 'sw.template.js'), 'utf8');
       fs.writeFileSync(path.join(root, 'sw.js'), tpl.replace('__VERSION__', version).replace('__FILES__', JSON.stringify(['./', ...list.map(f => './' + f)])));
@@ -32,11 +33,19 @@ function offlineApp(): Plugin {
  * de texto para el código del reverso del DNI). Se copian desde node_modules a /vision y /ocr. */
 const req = createRequire(import.meta.url);
 const pkgDir = (name: string) => path.dirname(req.resolve(name + '/package.json'));
+/** dist de ONNX Runtime Web (su paquete no exporta package.json) */
+const ortDist = () => path.dirname(req.resolve('onnxruntime-web/ort-wasm-simd-threaded.wasm'));
 function visionFiles(mode: string): Record<string, string> {
   const face = path.join(pkgDir('@vladmandic/face-api'), 'model');
   const nets = ['tiny_face_detector_model', 'face_landmark_68_model', ...(mode === 'autonoma' ? [] : ['face_recognition_model', 'ssd_mobilenetv1_model'])];
   const out: Record<string, string> = {};
   for (const n of nets) for (const f of [`${n}-weights_manifest.json`, `${n}.bin`]) out[`vision/${f}`] = path.join(face, f);
+  if (mode === 'autonoma') {
+    // Machine Learning de la demo sin internet en la computadora (no va al APK ni al celular)
+    const model = path.resolve(__dirname, '../../models/clip-vit-b32');
+    for (const f of ['vision.onnx', 'vision-1.bin', 'vision-2.bin', 'labels.json']) out[`ml/${f}`] = path.join(model, f);
+    for (const f of ['ort-wasm-simd-threaded.wasm', 'ort-wasm-simd-threaded.mjs']) out[`ml/${f}`] = path.join(ortDist(), f);
+  }
   if (mode !== 'autonoma') {
     out['ocr/worker.min.js'] = path.join(pkgDir('tesseract.js'), 'dist/worker.min.js');
     out['ocr/tesseract-core-simd-lstm.wasm.js'] = path.join(pkgDir('tesseract.js-core'), 'tesseract-core-simd-lstm.wasm.js');
@@ -57,7 +66,7 @@ function visionAssets(mode: string): Plugin {
         const u = (rq.url ?? '').split('?')[0].replace(/^\//, '');
         const from = files[u];
         if (!from) return next();
-        res.setHeader('Content-Type', u.endsWith('.json') ? 'application/json' : u.endsWith('.js') ? 'text/javascript' : 'application/octet-stream');
+        res.setHeader('Content-Type', u.endsWith('.json') ? 'application/json' : /\.m?js$/.test(u) ? 'text/javascript' : u.endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream');
         fs.createReadStream(from).pipe(res);
       });
     },
@@ -74,7 +83,13 @@ export default defineConfig(({ mode }) => ({
   base: mode === 'autonoma' ? './' : '/',
   define: mode === 'autonoma' ? { 'import.meta.env.VITE_LOCAL': JSON.stringify('1') } : {},
   plugins: mode === 'autonoma' ? [react(), visionAssets(mode), offlineApp()] : [react(), visionAssets(mode)],
-  resolve: { alias: [{ find: /^@mesagri\/shared$/, replacement: shared + '/index.ts' }, { find: /^@mesagri\/shared\/(.*)$/, replacement: shared + '/$1' }] },
+  resolve: {
+    alias: [
+      { find: /^@mesagri\/shared$/, replacement: shared + '/index.ts' }, { find: /^@mesagri\/shared\/(.*)$/, replacement: shared + '/$1' },
+      // ONNX Runtime Web sin el .wasm dentro del paquete: lo carga de ml/ (solo la demo sin internet)
+      { find: /^onnxruntime-web\/wasm$/, replacement: path.join(ortDist(), 'ort.wasm.min.mjs') },
+    ],
+  },
   server: {
     host: true,
     port: 5173,
